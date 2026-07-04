@@ -136,7 +136,9 @@ export interface ImportResult {
 }
 
 export const api = {
-  listApps: () => req<App[]>("GET", "/api/apps"),
+  // List endpoints coerce a null body to [] so the UI never reads .length/.map
+  // of null (Go marshals an empty slice as JSON null).
+  listApps: () => req<App[]>("GET", "/api/apps").then((a) => a ?? []),
   getApp: (id: number) => req<App>("GET", `/api/apps/${id}`),
   createApp: (a: Partial<App>) => req<App>("POST", "/api/apps", a),
   updateApp: (id: number, a: Partial<App>) => req<App>("PUT", `/api/apps/${id}`, a),
@@ -150,19 +152,20 @@ export const api = {
     req<DeployEvent>("POST", `/api/apps/${id}/deploy`, { tag: tag ?? "" }),
   rotateToken: (id: number) =>
     req<{ webhook_token: string }>("POST", `/api/apps/${id}/token/rotate`),
-  appStatus: (id: number) => req<TargetStatus[]>("GET", `/api/apps/${id}/status`),
-  appTags: (id: number) => req<string[]>("GET", `/api/apps/${id}/tags`),
+  appStatus: (id: number) => req<TargetStatus[]>("GET", `/api/apps/${id}/status`).then((s) => s ?? []),
+  appTags: (id: number) => req<string[]>("GET", `/api/apps/${id}/tags`).then((t) => t ?? []),
   listEvents: (params?: { app_id?: number; before_id?: number; limit?: number }) => {
     const q = new URLSearchParams();
     if (params?.app_id) q.set("app_id", String(params.app_id));
     if (params?.before_id) q.set("before_id", String(params.before_id));
     if (params?.limit) q.set("limit", String(params.limit));
     const qs = q.toString();
-    return req<DeployEvent[]>("GET", `/api/events${qs ? "?" + qs : ""}`);
+    return req<DeployEvent[]>("GET", `/api/events${qs ? "?" + qs : ""}`).then((e) => e ?? []);
   },
   getSettings: () => req<Settings>("GET", "/api/settings"),
   putSettings: (s: Settings) => req<Settings>("PUT", "/api/settings", s),
-  listRegistries: () => req<RegistryCred[]>("GET", "/api/settings/registries"),
+  listRegistries: () =>
+    req<RegistryCred[]>("GET", "/api/settings/registries").then((r) => r ?? []),
   putRegistry: (c: RegistryCred) => req<void>("PUT", "/api/settings/registries", c),
   deleteRegistry: (registry: string) =>
     req<void>("DELETE", `/api/settings/registries/${encodeURIComponent(registry)}`),

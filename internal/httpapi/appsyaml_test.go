@@ -30,6 +30,22 @@ func seedApp(t *testing.T, srv http.Handler, st interface {
 	return a
 }
 
+// Empty lists must serialize as [] not null, or the UI crashes on .length/.map.
+func TestListAppsEmptyReturnsArray(t *testing.T) {
+	srv, _, _ := testServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/apps", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Fatalf("empty apps body = %q, want []", got)
+	}
+}
+
 func TestExportApps(t *testing.T) {
 	srv, st, _ := testServer(t)
 	seedApp(t, srv, st)

@@ -45,7 +45,7 @@ func (s *Store) ListApps() ([]model.App, error) {
 	}
 	defer rows.Close()
 
-	var apps []model.App
+	apps := []model.App{} // non-nil so the JSON API returns [] not null when empty
 	for rows.Next() {
 		app, err := scanApp(rows)
 		if err != nil {
@@ -217,7 +217,7 @@ func (s *Store) targetsFor(appID int64) ([]model.Target, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var targets []model.Target
+	targets := []model.Target{} // non-nil so app.targets serializes as [] not null
 	for rows.Next() {
 		var t model.Target
 		if err := rows.Scan(&t.ID, &t.Namespace, &t.Kind, &t.Name, &t.Container); err != nil {

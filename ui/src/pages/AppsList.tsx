@@ -168,7 +168,7 @@ export default function AppsList() {
                         {app.name}
                       </Link>
                       <div className="faint mono" style={{ fontSize: 11 }}>
-                        {app.targets.length} target{app.targets.length !== 1 ? "s" : ""}
+                        {app.targets?.length ?? 0} target{(app.targets?.length ?? 0) !== 1 ? "s" : ""}
                       </div>
                     </td>
                     <td>

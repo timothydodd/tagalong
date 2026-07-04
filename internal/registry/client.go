@@ -75,6 +75,9 @@ func (c *Client) ListTags(repo string) ([]string, error) {
 		next = nextLink(link, ref.Registry)
 	}
 	sort.Strings(out.Tags)
+	if out.Tags == nil {
+		out.Tags = []string{} // return [] not null for a repo with no tags
+	}
 	return out.Tags, nil
 }
 
