@@ -1,0 +1,14 @@
+# Keep the build context small and reproducible. The image build produces the
+# UI (node stage) and the Go binary itself, so none of these belong in context.
+.git
+.github
+ui/node_modules
+ui/dist
+*.db
+*.db-shm
+*.db-wal
+/tagalong
+/tagalong.exe
+*.test
+*.out
+README.md
