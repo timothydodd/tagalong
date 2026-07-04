@@ -28,6 +28,18 @@ export function tagOf(image?: string): string {
   return colon >= 0 ? base.slice(colon + 1) : "latest";
 }
 
+// repoOf strips the tag and/or digest from an image ref, returning the repo
+// path (e.g. "docker.io/timdoddcool/app:v1" → "docker.io/timdoddcool/app").
+// A registry-port colon (before the last slash) is preserved.
+export function repoOf(image?: string): string {
+  if (!image) return "";
+  const at = image.indexOf("@");
+  const base = at >= 0 ? image.slice(0, at) : image;
+  const slash = base.lastIndexOf("/");
+  const colon = base.indexOf(":", slash + 1);
+  return colon >= 0 ? base.slice(0, colon) : base;
+}
+
 export function CopyField({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (

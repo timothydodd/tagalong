@@ -33,7 +33,7 @@ An **App** ties an image repo to one or more cluster workloads:
   | `semver` | a newer semver tag appears (leading `v` and bare `0.6` tolerated) | patch image |
 
   Pattern presets for `exact`: full git SHA `^[0-9a-f]{40}$`, short SHA `^[0-9a-f]{7,12}$`, metadata-action `^sha-[0-9a-f]+$`.
-- **targets** — the workloads to update: `{namespace, kind, name, container}`. Multiple targets let one app drive, e.g., a web + api pair.
+- **targets** — the workloads to update: `{namespace, kind, name, container}`. Multiple targets let one app drive, e.g., a web + api pair. On the **New app** screen, *Browse cluster* lists your live Deployments/StatefulSets and prefills the name, image, and target from the one you pick.
 - **webhook_token** — per-app secret embedded in the Docker Hub webhook URL.
 - **poll** — optional per-app registry polling (fallback for registries that can't send webhooks, e.g. `reg.dodd.rocks`).
 - **cf_purge** — optional Cloudflare cache purge after a successful rollout.

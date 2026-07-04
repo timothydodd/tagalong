@@ -92,6 +92,65 @@ func (k *K8s) containers(ctx context.Context, t model.Target) ([]corev1.Containe
 	}
 }
 
+// WorkloadContainer is one container of a discovered workload.
+type WorkloadContainer struct {
+	Name  string `json:"name"`
+	Image string `json:"image"`
+}
+
+// Workload is a cluster workload surfaced to the UI's "fill from a deployed
+// app" picker. It carries just enough to prefill an app's target + image_repo.
+type Workload struct {
+	Namespace  string              `json:"namespace"`
+	Kind       string              `json:"kind"` // Deployment | StatefulSet
+	Name       string              `json:"name"`
+	Containers []WorkloadContainer `json:"containers"`
+}
+
+// ListWorkloads returns every Deployment and StatefulSet the service can see
+// (cluster-wide, per its ClusterRole), for the app-creation picker.
+func (k *K8s) ListWorkloads(ctx context.Context) ([]Workload, error) {
+	if k.cs == nil {
+		return nil, ErrNoCluster
+	}
+	out := []Workload{}
+
+	deps, err := k.cs.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range deps.Items {
+		out = append(out, Workload{
+			Namespace:  d.Namespace,
+			Kind:       model.KindDeployment,
+			Name:       d.Name,
+			Containers: workloadContainers(d.Spec.Template.Spec.Containers),
+		})
+	}
+
+	sss, err := k.cs.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range sss.Items {
+		out = append(out, Workload{
+			Namespace:  s.Namespace,
+			Kind:       model.KindStatefulSet,
+			Name:       s.Name,
+			Containers: workloadContainers(s.Spec.Template.Spec.Containers),
+		})
+	}
+	return out, nil
+}
+
+func workloadContainers(cs []corev1.Container) []WorkloadContainer {
+	out := make([]WorkloadContainer, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, WorkloadContainer{Name: c.Name, Image: c.Image})
+	}
+	return out
+}
+
 // PatchImage sets the container image on the target via a strategic-merge patch.
 func (k *K8s) PatchImage(ctx context.Context, t model.Target, image string) error {
 	if k.cs == nil {

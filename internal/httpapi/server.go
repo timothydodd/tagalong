@@ -58,6 +58,8 @@ func NewServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *eve
 		r.Get("/apps/{id}/status", s.appStatus)
 		r.Get("/apps/{id}/tags", s.appTags)
 
+		r.Get("/workloads", s.listWorkloads)
+
 		r.Get("/events", s.listEvents)
 		r.Get("/events/stream", s.streamEvents)
 

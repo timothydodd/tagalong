@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api, type App, type Target, type TagStrategy } from "../api";
-import { CopyField, ErrorBox } from "../components";
+import {
+  api,
+  type App,
+  type Target,
+  type TagStrategy,
+  type Workload,
+  type WorkloadContainer,
+} from "../api";
+import { CopyField, ErrorBox, repoOf } from "../components";
 
 const PATTERN_PRESETS: { label: string; value: string }[] = [
   { label: "Full git SHA (40 hex)", value: "^[0-9a-f]{40}$" },
@@ -30,6 +37,13 @@ export default function AppForm() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [presetIdx, setPresetIdx] = useState(0);
+
+  // "Fill from a deployed workload" picker (new-app only).
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [workloads, setWorkloads] = useState<Workload[] | null>(null);
+  const [wlLoading, setWlLoading] = useState(false);
+  const [wlError, setWlError] = useState<string | null>(null);
+  const [wlQuery, setWlQuery] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -66,6 +80,39 @@ export default function AppForm() {
   const removeTarget = (i: number) =>
     setApp((a) => ({ ...a, targets: (a.targets ?? []).filter((_, j) => j !== i) }));
 
+  const toggleDiscover = async () => {
+    const next = !discoverOpen;
+    setDiscoverOpen(next);
+    if (next && workloads === null && !wlLoading) {
+      setWlLoading(true);
+      setWlError(null);
+      try {
+        setWorkloads(await api.listWorkloads());
+      } catch (e) {
+        setWlError(`Couldn't load workloads: ${e}. Is the cluster reachable?`);
+      } finally {
+        setWlLoading(false);
+      }
+    }
+  };
+
+  // Prefill name, image, and a single target from a chosen workload container.
+  const applyWorkload = (wl: Workload, c: WorkloadContainer) => {
+    setApp((a) => ({
+      ...a,
+      name: a.name?.trim() ? a.name : wl.name,
+      image_repo: repoOf(c.image),
+      targets: [{ namespace: wl.namespace, kind: wl.kind, name: wl.name, container: c.name }],
+    }));
+    setDiscoverOpen(false);
+  };
+
+  // Flatten workloads to (workload, container) rows and filter by the query.
+  const wlItems = (workloads ?? []).flatMap((wl) => wl.containers.map((c) => ({ wl, c })));
+  const wlFiltered = wlItems.filter(({ wl, c }) =>
+    `${wl.namespace}/${wl.name} ${c.name} ${c.image}`.toLowerCase().includes(wlQuery.toLowerCase()),
+  );
+
   const save = async () => {
     setSaving(true);
     setError(null);
@@ -89,6 +136,71 @@ export default function AppForm() {
         <h1>{editing ? `Edit ${app.name}` : "New app"}</h1>
       </div>
       <ErrorBox error={error} />
+
+      {!editing && (
+        <div className="card">
+          <div className="flex" style={{ marginBottom: discoverOpen ? 12 : 0 }}>
+            <div className="section-title" style={{ margin: 0 }}>
+              Start from a deployed workload
+            </div>
+            <div className="hint" style={{ marginLeft: 10 }}>
+              Prefill the name, image, and target from something already running.
+            </div>
+            <div className="spacer" />
+            <button className="btn sm" type="button" onClick={toggleDiscover}>
+              {discoverOpen ? "Hide" : "Browse cluster"}
+            </button>
+          </div>
+
+          {discoverOpen &&
+            (wlError ? (
+              <div className="hint">{wlError}</div>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  placeholder="Filter by namespace, name, or image…"
+                  value={wlQuery}
+                  onChange={(e) => setWlQuery(e.target.value)}
+                  autoFocus
+                />
+                {wlLoading ? (
+                  <div className="hint" style={{ marginTop: 8 }}>
+                    Loading workloads…
+                  </div>
+                ) : wlFiltered.length === 0 ? (
+                  <div className="hint" style={{ marginTop: 8 }}>
+                    {wlItems.length === 0 ? "No workloads found in the cluster." : "No matches."}
+                  </div>
+                ) : (
+                  <div className="wl-list">
+                    {wlFiltered.slice(0, 40).map(({ wl, c }, i) => (
+                      <button
+                        type="button"
+                        className="wl-item"
+                        key={`${wl.namespace}/${wl.name}/${c.name}/${i}`}
+                        onClick={() => applyWorkload(wl, c)}
+                      >
+                        <span className="mono">
+                          {wl.namespace}/{wl.name}
+                        </span>
+                        <span className="tag">{wl.kind}</span>
+                        <span className="faint mono">{c.name}</span>
+                        <span className="spacer" />
+                        <span className="faint mono wl-image">{c.image}</span>
+                      </button>
+                    ))}
+                    {wlFiltered.length > 40 && (
+                      <div className="hint" style={{ padding: "6px 4px" }}>
+                        Showing 40 of {wlFiltered.length}. Refine the filter.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ))}
+        </div>
+      )}
 
       <div className="card">
         <div className="row-2">

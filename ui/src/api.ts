@@ -75,6 +75,18 @@ export interface TargetStatus {
   error?: string;
 }
 
+export interface WorkloadContainer {
+  name: string;
+  image: string;
+}
+
+export interface Workload {
+  namespace: string;
+  kind: WorkloadKind;
+  name: string;
+  containers: WorkloadContainer[];
+}
+
 export interface Settings {
   cloudflare_api_token: string;
   github_webhook_secret: string;
@@ -152,6 +164,7 @@ export const api = {
     req<DeployEvent>("POST", `/api/apps/${id}/deploy`, { tag: tag ?? "" }),
   rotateToken: (id: number) =>
     req<{ webhook_token: string }>("POST", `/api/apps/${id}/token/rotate`),
+  listWorkloads: () => req<Workload[]>("GET", "/api/workloads").then((w) => w ?? []),
   appStatus: (id: number) => req<TargetStatus[]>("GET", `/api/apps/${id}/status`).then((s) => s ?? []),
   appTags: (id: number) => req<string[]>("GET", `/api/apps/${id}/tags`).then((t) => t ?? []),
   listEvents: (params?: { app_id?: number; before_id?: number; limit?: number }) => {
