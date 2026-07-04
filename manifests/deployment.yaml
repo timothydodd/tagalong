@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tagalong
+  namespace: tagalong
+  labels:
+    app: tagalong
+spec:
+  replicas: 1
+  # Recreate: the SQLite DB lives on a ReadWriteOnce PVC; never run two writers.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: tagalong
+  template:
+    metadata:
+      labels:
+        app: tagalong
+    spec:
+      serviceAccountName: tagalong
+      securityContext:
+        # distroless nonroot runs as uid/gid 65532; make the PVC writable.
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: tagalong
+          image: timdoddcool/tagalong:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TAGALONG_DB_PATH
+              value: /data/tagalong.db
+            - name: TAGALONG_LISTEN
+              value: ":8080"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: tagalong-data

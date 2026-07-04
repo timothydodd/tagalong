@@ -1,0 +1,22 @@
+# Go
+/tagalong
+/tagalong.exe
+*.test
+*.out
+
+# Local dev data
+*.db
+*.db-shm
+*.db-wal
+dev.db*
+
+# UI — dist is build output, but keep the placeholder index.html so `go build`
+# (which embeds ui/dist) works on a fresh checkout before the UI is built.
+ui/node_modules/
+/ui/dist/*
+!/ui/dist/index.html
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

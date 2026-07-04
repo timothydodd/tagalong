@@ -1,0 +1,199 @@
+// Package deploy orchestrates image updates against the cluster: it patches or
+// restarts target workloads, watches the rollout, records history, and runs the
+// optional Cloudflare purge.
+package deploy
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/timothydodd/tagalong/internal/events"
+	"github.com/timothydodd/tagalong/internal/model"
+)
+
+// rolloutTimeout bounds how long we wait for a single target to become healthy.
+const rolloutTimeout = 5 * time.Minute
+
+// Store is the persistence surface the engine needs.
+type Store interface {
+	CreateEvent(model.DeployEvent) (model.DeployEvent, error)
+	UpdateEvent(model.DeployEvent) error
+	SetLastSeen(id int64, tag, digest string) error
+	GetSetting(key string) (string, error)
+}
+
+// Purger runs a post-deploy cache purge for an app. Implemented by the
+// cloudflare package; may be nil.
+type Purger interface {
+	Purge(ctx context.Context, app model.App) error
+}
+
+// Job is a requested deploy.
+type Job struct {
+	App     model.App
+	Trigger string // model.Trigger*
+	// NewImage is the fully-qualified image to patch to. Empty means restart.
+	NewImage string
+	// Tag/Digest recorded as last-seen on success.
+	Tag    string
+	Digest string
+	// Action is model.ActionPatch or model.ActionRestart.
+	Action string
+}
+
+// Engine serializes deploys per app and executes them.
+type Engine struct {
+	k8s    *K8s
+	store  Store
+	bus    *events.Bus
+	purger Purger
+	log    *slog.Logger
+
+	mu    sync.Mutex
+	queues map[int64]chan Job
+	wg    sync.WaitGroup
+}
+
+// NewEngine constructs an Engine. purger may be nil.
+func NewEngine(k8s *K8s, store Store, bus *events.Bus, purger Purger, log *slog.Logger) *Engine {
+	return &Engine{
+		k8s:    k8s,
+		store:  store,
+		bus:    bus,
+		purger: purger,
+		log:    log,
+		queues: make(map[int64]chan Job),
+	}
+}
+
+// Enqueue queues a job for asynchronous execution, serialized per app. Duplicate
+// jobs (same app already queued for the same image) are dropped.
+func (e *Engine) Enqueue(job Job) {
+	e.mu.Lock()
+	q, ok := e.queues[job.App.ID]
+	if !ok {
+		q = make(chan Job, 8)
+		e.queues[job.App.ID] = q
+		e.wg.Add(1)
+		go e.worker(job.App.ID, q)
+	}
+	e.mu.Unlock()
+
+	select {
+	case q <- job:
+	default:
+		e.log.Warn("deploy queue full, dropping job", "app", job.App.Name, "image", job.NewImage)
+	}
+}
+
+// DeploySync executes a job synchronously and returns the terminal event. Used
+// by the manual-deploy API so the caller gets an immediate result.
+func (e *Engine) DeploySync(ctx context.Context, job Job) model.DeployEvent {
+	return e.run(ctx, job)
+}
+
+func (e *Engine) worker(appID int64, q chan Job) {
+	defer e.wg.Done()
+	for job := range q {
+		e.run(context.Background(), job)
+	}
+}
+
+func (e *Engine) run(ctx context.Context, job Job) model.DeployEvent {
+	app := job.App
+	action := job.Action
+	if action == "" {
+		if job.NewImage != "" {
+			action = model.ActionPatch
+		} else {
+			action = model.ActionRestart
+		}
+	}
+
+	ev := model.DeployEvent{
+		AppID:    &app.ID,
+		AppName:  app.Name,
+		Trigger:  job.Trigger,
+		Action:   action,
+		NewImage: job.NewImage,
+		Status:   model.StatusPending,
+	}
+	// Record current image (from the first target) for history / rollback.
+	if len(app.Targets) > 0 {
+		if cur, err := e.k8s.CurrentImage(ctx, app.Targets[0]); err == nil {
+			ev.OldImage = cur
+		}
+	}
+	ev, err := e.store.CreateEvent(ev)
+	if err != nil {
+		e.log.Error("create deploy event", "err", err)
+		return ev
+	}
+	e.bus.Publish(ev)
+
+	if len(app.Targets) == 0 {
+		return e.finish(ev, model.StatusFailed, "app has no targets")
+	}
+
+	// Move to rolling.
+	ev.Status = model.StatusRolling
+	e.store.UpdateEvent(ev)
+	e.bus.Publish(ev)
+
+	// Apply to every target, then wait for each rollout.
+	for _, t := range app.Targets {
+		var perr error
+		if action == model.ActionRestart {
+			perr = e.k8s.RestartRollout(ctx, t, time.Now())
+		} else {
+			perr = e.k8s.PatchImage(ctx, t, job.NewImage)
+		}
+		if perr != nil {
+			return e.finish(ev, model.StatusFailed, fmt.Sprintf("patch %s/%s: %v", t.Namespace, t.Name, perr))
+		}
+	}
+	for _, t := range app.Targets {
+		wctx, cancel := context.WithTimeout(ctx, rolloutTimeout)
+		werr := e.k8s.WaitForRollout(wctx, t, rolloutTimeout)
+		cancel()
+		if werr != nil {
+			return e.finish(ev, model.StatusFailed, fmt.Sprintf("%s/%s: %v", t.Namespace, t.Name, werr))
+		}
+	}
+
+	// Success: record last-seen and run optional purge.
+	if job.Tag != "" || job.Digest != "" {
+		if err := e.store.SetLastSeen(app.ID, job.Tag, job.Digest); err != nil {
+			e.log.Warn("set last seen", "app", app.Name, "err", err)
+		}
+	}
+	if e.purger != nil && app.CFPurge.Enabled {
+		if perr := e.purger.Purge(ctx, app); perr != nil {
+			e.log.Warn("cloudflare purge failed", "app", app.Name, "err", perr)
+			ev.Detail = "deployed; cloudflare purge failed: " + perr.Error()
+		} else {
+			ev.CFPurged = true
+		}
+	}
+	return e.finish(ev, model.StatusSuccess, ev.Detail)
+}
+
+func (e *Engine) finish(ev model.DeployEvent, status, detail string) model.DeployEvent {
+	ev.Status = status
+	if detail != "" {
+		ev.Detail = detail
+	}
+	if err := e.store.UpdateEvent(ev); err != nil {
+		e.log.Error("update deploy event", "err", err)
+	}
+	e.bus.Publish(ev)
+	if status == model.StatusFailed {
+		e.log.Error("deploy failed", "app", ev.AppName, "detail", ev.Detail)
+	} else {
+		e.log.Info("deploy done", "app", ev.AppName, "status", status, "image", ev.NewImage)
+	}
+	return ev
+}
