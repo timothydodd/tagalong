@@ -64,6 +64,7 @@ make dev
 make dev-ui
 ```
 
+
 Open <http://localhost:5173>. You can create apps, wire webhooks, browse history,
 and see live SSE updates. The registry tag picker and webhook parsing work fully
 (they don't need the cluster). Only pressing *Deploy* against a target requires k8s.
