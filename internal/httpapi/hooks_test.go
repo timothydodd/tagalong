@@ -37,7 +37,9 @@ func readyDeploy(ns, name, container, image string) *appsv1.Deployment {
 	}
 }
 
-func testServer(t *testing.T, deps ...*appsv1.Deployment) (http.Handler, *store.Store, *fake.Clientset) {
+// rawTestServer builds the real handler without any test-side auth shim, so
+// auth tests can assert the unauthenticated behavior directly.
+func rawTestServer(t *testing.T, deps ...*appsv1.Deployment) (http.Handler, *store.Store, *fake.Clientset) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -52,7 +54,51 @@ func testServer(t *testing.T, deps ...*appsv1.Deployment) (http.Handler, *store.
 	bus := events.NewBus()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	engine := deploy.NewEngine(k8s, st, bus, nil, log)
+	if err := SeedAdmin(st, log); err != nil {
+		t.Fatal(err)
+	}
 	return NewServer(st, engine, k8s, bus, nil, log), st, cs
+}
+
+// testServer returns the handler wrapped so every request carries a valid admin
+// session — most tests exercise protected endpoints and shouldn't each re-login.
+// Auth enforcement itself is covered in authn_test.go via rawTestServer.
+func testServer(t *testing.T, deps ...*appsv1.Deployment) (http.Handler, *store.Store, *fake.Clientset) {
+	t.Helper()
+	h, st, cs := rawTestServer(t, deps...)
+	return cookieInjector{h: h, c: loginCookie(t, h)}, st, cs
+}
+
+// loginCookie performs an admin/admin login and returns the session cookie.
+func loginCookie(t *testing.T, h http.Handler) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/login",
+		bytes.NewBufferString(`{"username":"admin","password":"admin"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test login failed: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie {
+			return c
+		}
+	}
+	t.Fatal("login returned no session cookie")
+	return nil
+}
+
+// cookieInjector attaches a session cookie to any request that lacks one.
+type cookieInjector struct {
+	h http.Handler
+	c *http.Cookie
+}
+
+func (ci cookieInjector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, err := r.Cookie(sessionCookie); err != nil {
+		r.AddCookie(ci.c)
+	}
+	ci.h.ServeHTTP(w, r)
 }
 
 func waitImage(t *testing.T, cs *fake.Clientset, ns, name, container, want string) {
@@ -94,6 +140,51 @@ func TestDockerHubWebhookDeploys(t *testing.T) {
 		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
 	}
 	waitImage(t, cs, "default", "homedash", "robo-dash", "docker.io/timdoddcool/robo-dash:"+newTag)
+}
+
+// hooksServer builds the hooks-only handler over the same store/cluster as
+// testServer, so tests can assert what it does and doesn't expose.
+func hooksServer(t *testing.T, deps ...*appsv1.Deployment) (http.Handler, *store.Store, *fake.Clientset) {
+	t.Helper()
+	full, st, cs := testServer(t, deps...)
+	_ = full // full handler shares the same store; we want a hooks-only one here.
+	k8s := deploy.NewK8sWithClient(cs)
+	bus := events.NewBus()
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	engine := deploy.NewEngine(k8s, st, bus, nil, log)
+	return NewHooksHandler(st, engine, k8s, bus, nil, log), st, cs
+}
+
+func TestHooksHandlerServesHooksNotPortal(t *testing.T) {
+	dep := readyDeploy("default", "homedash", "robo-dash", "timdoddcool/robo-dash:oldsha")
+	srv, st, cs := hooksServer(t, dep)
+
+	newTag := "4fc1300ae6f6b4ede2f1db308e24db1647c4c7f9"
+	st.CreateApp(model.App{
+		Name: "robo-dash", ImageRepo: "docker.io/timdoddcool/robo-dash",
+		TagStrategy: model.StrategyExact, StrategyConf: model.StrategyConf{Pattern: "^[0-9a-f]{40}$"},
+		Enabled: true, WebhookToken: "tok123",
+		Targets: []model.Target{{Namespace: "default", Kind: model.KindDeployment, Name: "homedash", Container: "robo-dash"}},
+	})
+
+	// The webhook works on the hooks-only handler.
+	body := `{"push_data":{"tag":"` + newTag + `"},"repository":{"repo_name":"timdoddcool/robo-dash"}}`
+	req := httptest.NewRequest(http.MethodPost, "/hooks/dockerhub/tok123", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 from hook, got %d: %s", rec.Code, rec.Body.String())
+	}
+	waitImage(t, cs, "default", "homedash", "robo-dash", "docker.io/timdoddcool/robo-dash:"+newTag)
+
+	// The portal and API are NOT reachable on this handler.
+	for _, path := range []string{"/", "/api/apps", "/api/settings"} {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404 for %q on hooks-only handler, got %d", path, rec.Code)
+		}
+	}
 }
 
 func TestDockerHubWebhookSkipsNonMatchingTag(t *testing.T) {

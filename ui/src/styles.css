@@ -45,6 +45,24 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
   top: 0;
   height: 100vh;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-foot {
+  margin-top: auto;
+  padding: 12px 8px 4px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sidebar-foot .who {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .brand {
   font-weight: 700;
@@ -200,6 +218,25 @@ textarea { font-family: var(--mono); font-size: 12.5px; resize: vertical; min-he
 .empty { text-align: center; color: var(--text-faint); padding: 40px; }
 .error-box { background: #3a1717; border: 1px solid #5a2b2b; color: #ffb4ae; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
 .ok-box { background: #14301f; border: 1px solid #285138; color: #93e0b0; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
+.warn-box { background: #33280f; border: 1px solid #5a4a1e; color: #e6c877; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
+.warn-box a { color: inherit; font-weight: 600; text-decoration: underline; }
+
+/* Login screen */
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-dim);
+}
+.auth-card {
+  width: 100%;
+  max-width: 340px;
+  margin-bottom: 0;
+}
+.auth-card .brand { justify-content: center; padding-top: 4px; }
+.auth-card .btn { width: 100%; margin-top: 4px; }
 .hint { color: var(--text-faint); font-size: 12px; }
 
 /* Workload picker (New app → Browse cluster) */

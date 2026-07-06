@@ -1,6 +1,84 @@
 import { useEffect, useState } from "react";
 import { api, type RegistryCred, type Settings as SettingsT } from "../api";
 import { ErrorBox } from "../components";
+import { useAuth } from "../auth";
+
+function AccountCard() {
+  const { user, refresh } = useAuth();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const change = async () => {
+    setError(null);
+    if (next !== confirm) {
+      setError("New password and confirmation do not match.");
+      return;
+    }
+    if (next.length < 8) {
+      setError("New password must be at least 8 characters.");
+      return;
+    }
+    try {
+      await api.changePassword(current, next);
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="section-title">Account</div>
+      <div className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
+        Signed in as <code>{user?.username}</code>. Change the portal password below.
+      </div>
+      <ErrorBox error={error} />
+      <div className="form-row">
+        <label>Current password</label>
+        <input
+          type="password"
+          value={current}
+          autoComplete="current-password"
+          onChange={(e) => setCurrent(e.target.value)}
+        />
+      </div>
+      <div className="row-2">
+        <div className="form-row">
+          <label>New password</label>
+          <input
+            type="password"
+            value={next}
+            autoComplete="new-password"
+            onChange={(e) => setNext(e.target.value)}
+          />
+        </div>
+        <div className="form-row">
+          <label>Confirm new password</label>
+          <input
+            type="password"
+            value={confirm}
+            autoComplete="new-password"
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+        </div>
+      </div>
+      <button className="btn primary" onClick={change} disabled={!current || !next}>
+        {saved ? "Changed ✓" : "Change password"}
+      </button>
+      <div className="hint" style={{ marginTop: 8 }}>
+        Minimum 8 characters. You stay signed in after changing it.
+      </div>
+    </div>
+  );
+}
 
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsT>({
@@ -52,6 +130,8 @@ export default function Settings() {
         <h1>Settings</h1>
       </div>
       <ErrorBox error={error} />
+
+      <AccountCard />
 
       <div className="card">
         <div className="section-title">Secrets</div>

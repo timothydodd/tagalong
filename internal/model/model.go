@@ -131,6 +131,12 @@ type Settings struct {
 const (
 	KeyCloudflareAPIToken  = "cloudflare_api_token"
 	KeyGitHubWebhookSecret = "github_webhook_secret"
+
+	// Portal auth. These are internal — never surfaced via /api/settings.
+	KeyAuthUsername          = "auth_username"
+	KeyAuthPasswordHash      = "auth_password_hash"
+	KeyAuthSessionSecret     = "auth_session_secret"
+	KeyAuthPasswordIsDefault = "auth_password_is_default"
 )
 
 // MarshalConf serializes a value to a JSON string for storage; returns "{}" on error.

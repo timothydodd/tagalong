@@ -31,11 +31,19 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
+            # Uncomment to expose only the webhooks publicly (see README:
+            # "Exposing only the webhooks"). Requires TAGALONG_HOOKS_LISTEN below
+            # and a matching Service port.
+            # - name: hooks
+            #   containerPort: 8081
           env:
             - name: TAGALONG_DB_PATH
               value: /data/tagalong.db
             - name: TAGALONG_LISTEN
               value: ":8080"
+            # Second listener serving only /hooks/* — point the public tunnel here.
+            # - name: TAGALONG_HOOKS_LISTEN
+            #   value: ":8081"
           volumeMounts:
             - name: data
               mountPath: /data

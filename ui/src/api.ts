@@ -98,8 +98,25 @@ export interface RegistryCred {
   password: string;
 }
 
-async function failIfNotOk(res: Response): Promise<void> {
+export interface Me {
+  username: string;
+  must_change_password: boolean;
+}
+
+// onUnauthorized is invoked when a data request returns 401 (session expired or
+// missing), so the app can drop back to the login screen. The login/me probes
+// are exempt — a 401 there is an expected answer, not a session drop.
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn;
+}
+const authProbes = new Set(["/api/login", "/api/me"]);
+
+async function failIfNotOk(res: Response, path: string): Promise<void> {
   if (res.ok) return;
+  if (res.status === 401 && !authProbes.has(path)) {
+    onUnauthorized?.();
+  }
   let msg = res.statusText;
   try {
     const j = await res.json();
@@ -116,7 +133,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  await failIfNotOk(res);
+  await failIfNotOk(res, path);
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   return text ? (JSON.parse(text) as T) : (undefined as T);
@@ -125,7 +142,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 // reqText fetches a plain-text (YAML) body.
 async function reqText(method: string, path: string): Promise<string> {
   const res = await fetch(path, { method });
-  await failIfNotOk(res);
+  await failIfNotOk(res, path);
   return res.text();
 }
 
@@ -136,7 +153,7 @@ async function reqYAML<T>(method: string, path: string, yamlText: string): Promi
     headers: { "Content-Type": "application/x-yaml" },
     body: yamlText,
   });
-  await failIfNotOk(res);
+  await failIfNotOk(res, path);
   const text = await res.text();
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
@@ -175,6 +192,12 @@ export const api = {
     const qs = q.toString();
     return req<DeployEvent[]>("GET", `/api/events${qs ? "?" + qs : ""}`).then((e) => e ?? []);
   },
+  me: () => req<Me>("GET", "/api/me"),
+  login: (username: string, password: string) =>
+    req<Me>("POST", "/api/login", { username, password }),
+  logout: () => req<void>("POST", "/api/logout"),
+  changePassword: (current_password: string, new_password: string) =>
+    req<Me>("POST", "/api/account/password", { current_password, new_password }),
   getSettings: () => req<Settings>("GET", "/api/settings"),
   putSettings: (s: Settings) => req<Settings>("PUT", "/api/settings", s),
   listRegistries: () =>

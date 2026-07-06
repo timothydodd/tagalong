@@ -28,7 +28,7 @@ func main() {
 	slog.SetDefault(log)
 
 	cfg := config.Load()
-	log.Info("starting tagalong", "db", cfg.DBPath, "listen", cfg.Listen, "kubeconfig", cfg.Kubeconfig != "")
+	log.Info("starting tagalong", "db", cfg.DBPath, "listen", cfg.Listen, "hooks_listen", cfg.HooksListen, "kubeconfig", cfg.Kubeconfig != "")
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -41,6 +41,12 @@ func main() {
 		log.Warn("sweep stale events", "err", err)
 	} else if n > 0 {
 		log.Info("swept stale in-flight events", "count", n)
+	}
+
+	// Ensure a portal login exists (default admin/admin on a fresh DB).
+	if err := httpapi.SeedAdmin(st, log); err != nil {
+		log.Error("seed admin account", "err", err)
+		os.Exit(1)
 	}
 
 	k8s, err := deploy.NewK8s(cfg.Kubeconfig)
@@ -77,14 +83,19 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	go serve(srv, "main", log)
 
-	go func() {
-		log.Info("http listening", "addr", cfg.Listen)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("http server", "err", err)
-			os.Exit(1)
+	// Optional second listener serving only the webhook receivers, so the hooks
+	// can be exposed publicly while the portal/API stay private on the main port.
+	var hooksSrv *http.Server
+	if cfg.HooksListen != "" {
+		hooksSrv = &http.Server{
+			Addr:              cfg.HooksListen,
+			Handler:           httpapi.NewHooksHandler(st, engine, k8s, bus, reg, log),
+			ReadHeaderTimeout: 10 * time.Second,
 		}
-	}()
+		go serve(hooksSrv, "hooks", log)
+	}
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)
@@ -94,4 +105,17 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+	if hooksSrv != nil {
+		hooksSrv.Shutdown(ctx)
+	}
+}
+
+// serve runs an HTTP server, exiting the process on any error other than a
+// clean shutdown. name distinguishes listeners in logs.
+func serve(srv *http.Server, name string, log *slog.Logger) {
+	log.Info("http listening", "listener", name, "addr", srv.Addr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("http server", "listener", name, "err", err)
+		os.Exit(1)
+	}
 }

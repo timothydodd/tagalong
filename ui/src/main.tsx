@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./styles.css";
+import { AuthGate } from "./auth";
 import App from "./App";
 import AppsList from "./pages/AppsList";
 import AppForm from "./pages/AppForm";
@@ -26,6 +27,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <AuthGate>
+      <RouterProvider router={router} />
+    </AuthGate>
   </React.StrictMode>
 );

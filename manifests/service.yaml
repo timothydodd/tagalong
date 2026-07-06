@@ -13,3 +13,8 @@ spec:
     - name: http
       port: 80
       targetPort: 8080
+    # Uncomment alongside TAGALONG_HOOKS_LISTEN to route the public tunnel/proxy
+    # to the webhooks-only port while :80 (portal + API) stays LAN-only.
+    # - name: hooks
+    #   port: 8081
+    #   targetPort: 8081
