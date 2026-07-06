@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { api, type App, type DeployEvent, type TargetStatus } from "../api";
-import { downloadText, ErrorBox, StatusBadge, timeAgo, tagOf } from "../components";
+import { CopyField, downloadText, ErrorBox, StatusBadge, timeAgo, tagOf } from "../components";
 import { useLiveEvents } from "../useEvents";
 
 export default function AppDetail() {
@@ -154,6 +154,34 @@ export default function AppDetail() {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* Webhooks */}
+      <div className="card">
+        <div className="section-title">Webhooks</div>
+        <div className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
+          Point your registry at the URL for wherever it publishes. URLs use this
+          portal's address — if you reach the portal on the LAN but the registry is
+          external, swap the host for your public tagalong URL.
+        </div>
+        <div className="form-row">
+          <label>Docker Hub</label>
+          <CopyField value={`${window.location.origin}/hooks/dockerhub/${app.webhook_token}`} />
+          <div className="hint">
+            Per-app URL — the token identifies this app. Docker Hub → the repo →
+            <code>Webhooks</code>.
+          </div>
+        </div>
+        <div className="form-row" style={{ marginBottom: 0 }}>
+          <label>GitHub (GHCR)</label>
+          <CopyField value={`${window.location.origin}/hooks/github`} />
+          <div className="hint">
+            Shared URL — GitHub matches this app by <code>image_repo</code> (
+            <span className="mono">{app.image_repo}</span>). Set the secret in{" "}
+            <Link to="/settings">Settings</Link>, content type{" "}
+            <code>application/json</code>, event <code>Packages</code>.
+          </div>
+        </div>
       </div>
 
       {/* Manual deploy */}

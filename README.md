@@ -176,10 +176,28 @@ Route a public hostname to the `tagalong` Service through the existing tunnel + 
 1. **nginx-proxy-manager** → add a Proxy Host `tagalong.dodd.rocks` → `tagalong.tagalong.svc.cluster.local:80`.
 2. **Cloudflare Tunnel** (Zero Trust dashboard) → add a public hostname `tagalong.dodd.rocks` → `http://nginx-lb:80` (same pattern the other services use).
 
-Then configure the sources:
+Then configure the sources. The portal builds these URLs for you: an app's detail
+page has a **Webhooks** card with its ready-to-paste Docker Hub and GitHub URLs, and
+**Settings** shows the GitHub payload URL next to the (unmasked) webhook secret.
 
-- **Docker Hub** (per repo): Repository → Webhooks → add `https://tagalong.dodd.rocks/hooks/dockerhub/<webhook_token>` (copy the token from the app in the UI or the API).
-- **GitHub** (org or repo): Settings → Webhooks → Payload URL `https://tagalong.dodd.rocks/hooks/github`, content type `application/json`, secret = the value you set in **Settings → GitHub webhook secret**, events: **Packages** (and/or Registry packages). One org-level webhook covers every GHCR repo; tagalong ignores packages that don't match a configured app.
+- **Docker Hub** (per repo): Repository → Webhooks → add `https://tagalong.dodd.rocks/hooks/dockerhub/<webhook_token>` (copy it from the app's **Webhooks** card, or the API).
+- **GitHub** (org or repo): Settings → Webhooks → Payload URL `https://tagalong.dodd.rocks/hooks/github`, content type `application/json`, secret = the value from **Settings → GitHub webhook secret**, events: **Packages** (and/or Registry packages). One org-level webhook covers every GHCR repo; tagalong ignores packages that don't match a configured app. GitHub's initial **ping** gets a `200` and is safely ignored.
+
+**Test a webhook without waiting for a real push** with `scripts/test-webhook.ps1`
+(Windows PowerShell — computes the GitHub signature for you, no openssl needed):
+
+```powershell
+# Docker Hub
+./scripts/test-webhook.ps1 -Type dockerhub -Token <webhook_token> -Repo owner/name -Tag latest
+# GitHub / GHCR
+./scripts/test-webhook.ps1 -Type github -Secret <webhook_secret> -Repo ghcr.io/you/api -Tag v1.2.3
+# GitHub ping
+./scripts/test-webhook.ps1 -Type github -Secret <webhook_secret> -Ping
+```
+
+Add `-BaseUrl https://tagalong.dodd.rocks` to hit a remote instance. The script
+prints the request and the HTTP status/response so you can see `deploying`,
+`skipped`, `no app for …`, or `ignored`.
 
 #### Exposing only the webhooks (not the portal)
 
@@ -243,7 +261,7 @@ GET    /api/apps/{id}/status          # live k8s state per target
 GET    /api/apps/{id}/tags            # registry tag list (polling must be usable)
 GET    /api/events[?app_id=&before_id=&limit=]
 GET    /api/events/stream             # Server-Sent Events (live activity)
-GET/PUT /api/settings                 # Cloudflare token, GitHub webhook secret (masked on read)
+GET/PUT /api/settings                 # Cloudflare token (masked on read); GitHub webhook secret (shown in clear)
 GET/PUT/DELETE /api/settings/registries
 
 POST   /hooks/dockerhub/{token}

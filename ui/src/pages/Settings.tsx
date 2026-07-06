@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type RegistryCred, type Settings as SettingsT } from "../api";
-import { ErrorBox } from "../components";
+import { CopyField, ErrorBox } from "../components";
 import { useAuth } from "../auth";
 
 function AccountCard() {
@@ -151,21 +151,30 @@ export default function Settings() {
         <div className="form-row">
           <label>GitHub webhook secret</label>
           <input
-            type="password"
+            type="text"
             value={settings.github_webhook_secret}
             onChange={(e) => setSettings({ ...settings, github_webhook_secret: e.target.value })}
             placeholder="(unset)"
           />
           <div className="hint">
-            Validates <code>X-Hub-Signature-256</code> on <code>/hooks/github</code>. Set the same
-            value in the GitHub webhook config.
+            Validates <code>X-Hub-Signature-256</code> on <code>/hooks/github</code>. Shown in
+            full so you can paste the same value into the GitHub webhook config.
+          </div>
+        </div>
+        <div className="form-row">
+          <label>GitHub webhook payload URL</label>
+          <CopyField value={`${window.location.origin}/hooks/github`} />
+          <div className="hint">
+            One URL for all apps — GitHub matches each by its <code>image_repo</code>. Content
+            type <code>application/json</code>, event <code>Packages</code>. Swap the host for
+            your public tagalong URL if you reach this portal on the LAN.
           </div>
         </div>
         <button className="btn primary" onClick={saveSettings}>
           {saved ? "Saved ✓" : "Save settings"}
         </button>
         <div className="hint" style={{ marginTop: 8 }}>
-          Stored values are masked as <code>********</code>; leave a field masked to keep it
+          The Cloudflare token is masked as <code>********</code> — leave it masked to keep it
           unchanged.
         </div>
       </div>

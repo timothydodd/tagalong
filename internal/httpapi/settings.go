@@ -17,8 +17,11 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	cfToken, _ := s.store.GetSetting(model.KeyCloudflareAPIToken)
 	ghSecret, _ := s.store.GetSetting(model.KeyGitHubWebhookSecret)
 	writeJSON(w, http.StatusOK, model.Settings{
-		CloudflareAPIToken:  maskIfSet(cfToken),
-		GitHubWebhookSecret: maskIfSet(ghSecret),
+		CloudflareAPIToken: maskIfSet(cfToken),
+		// The GitHub webhook secret is returned in the clear: it's not an external
+		// credential, and operators need to read it back to paste into the GitHub
+		// webhook config. It is only reachable behind the portal login.
+		GitHubWebhookSecret: ghSecret,
 	})
 }
 
