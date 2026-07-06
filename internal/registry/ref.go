@@ -5,7 +5,7 @@ import "strings"
 
 // Ref is a parsed container image reference.
 type Ref struct {
-	Registry string // e.g. docker.io, ghcr.io, reg.dodd.rocks
+	Registry string // e.g. docker.io, ghcr.io, registry.example.com
 	Path     string // e.g. timdoddcool/filelink, library/mysql, timothydodd/cadence/api
 	Tag      string // e.g. latest, sha-33cefd3 (empty if none / digest given)
 	Digest   string // e.g. sha256:... (empty if none)

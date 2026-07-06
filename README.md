@@ -35,7 +35,7 @@ An **App** ties an image repo to one or more cluster workloads:
   Pattern presets for `exact`: full git SHA `^[0-9a-f]{40}$`, short SHA `^[0-9a-f]{7,12}$`, metadata-action `^sha-[0-9a-f]+$`.
 - **targets** — the workloads to update: `{namespace, kind, name, container}`. Multiple targets let one app drive, e.g., a web + api pair. On the **New app** screen, *Browse cluster* lists your live Deployments/StatefulSets and prefills the name, image, and target from the one you pick.
 - **webhook_token** — per-app secret embedded in the Docker Hub webhook URL.
-- **poll** — optional per-app registry polling (fallback for registries that can't send webhooks, e.g. `reg.dodd.rocks`).
+- **poll** — optional per-app registry polling (fallback for registries that can't send webhooks, e.g. `registry.example.com`).
 - **cf_purge** — optional Cloudflare cache purge after a successful rollout.
 
 ## Local development
@@ -173,15 +173,15 @@ Only the single admin login exists — there are no roles or multiple users.
 
 Route a public hostname to the `tagalong` Service through the existing tunnel + proxy:
 
-1. **nginx-proxy-manager** → add a Proxy Host `tagalong.dodd.rocks` → `tagalong.tagalong.svc.cluster.local:80`.
-2. **Cloudflare Tunnel** (Zero Trust dashboard) → add a public hostname `tagalong.dodd.rocks` → `http://nginx-lb:80` (same pattern the other services use).
+1. **nginx-proxy-manager** → add a Proxy Host `tagalong.example.com` → `tagalong.tagalong.svc.cluster.local:80`.
+2. **Cloudflare Tunnel** (Zero Trust dashboard) → add a public hostname `tagalong.example.com` → `http://nginx-lb:80` (same pattern the other services use).
 
 Then configure the sources. The portal builds these URLs for you: an app's detail
 page has a **Webhooks** card with its ready-to-paste Docker Hub and GitHub URLs, and
 **Settings** shows the GitHub payload URL next to the (unmasked) webhook secret.
 
-- **Docker Hub** (per repo): Repository → Webhooks → add `https://tagalong.dodd.rocks/hooks/dockerhub/<webhook_token>` (copy it from the app's **Webhooks** card, or the API).
-- **GitHub** (org or repo): Settings → Webhooks → Payload URL `https://tagalong.dodd.rocks/hooks/github`, content type `application/json`, secret = the value from **Settings → GitHub webhook secret**, events: **Packages** (and/or Registry packages). One org-level webhook covers every GHCR repo; tagalong ignores packages that don't match a configured app. GitHub's initial **ping** gets a `200` and is safely ignored.
+- **Docker Hub** (per repo): Repository → Webhooks → add `https://tagalong.example.com/hooks/dockerhub/<webhook_token>` (copy it from the app's **Webhooks** card, or the API).
+- **GitHub** (org or repo): Settings → Webhooks → Payload URL `https://tagalong.example.com/hooks/github`, content type `application/json`, secret = the value from **Settings → GitHub webhook secret**, events: **Packages** (and/or Registry packages). One org-level webhook covers every GHCR repo; tagalong ignores packages that don't match a configured app. GitHub's initial **ping** gets a `200` and is safely ignored.
 
 **Test a webhook without waiting for a real push** with `scripts/test-webhook.ps1`
 (Windows PowerShell — computes the GitHub signature for you, no openssl needed):
@@ -195,7 +195,7 @@ page has a **Webhooks** card with its ready-to-paste Docker Hub and GitHub URLs,
 ./scripts/test-webhook.ps1 -Type github -Secret <webhook_secret> -Ping
 ```
 
-Add `-BaseUrl https://tagalong.dodd.rocks` to hit a remote instance. The script
+Add `-BaseUrl https://tagalong.example.com` to hit a remote instance. The script
 prints the request and the HTTP status/response so you can see `deploying`,
 `skipped`, `no app for …`, or `ignored`.
 
@@ -212,7 +212,7 @@ an all-private setup.
 
 Point your tunnel/proxy at the hooks port and keep the main port on the LAN:
 
-- **nginx-proxy-manager** → `tagalong.dodd.rocks` → `tagalong.tagalong.svc.cluster.local:8081` (the hooks port).
+- **nginx-proxy-manager** → `tagalong.example.com` → `tagalong.tagalong.svc.cluster.local:8081` (the hooks port).
 - Reach the portal over the cluster LAN / port-forward on `:8080`, unexposed.
 
 In the Deployment, expose the extra `containerPort` and add a matching Service port

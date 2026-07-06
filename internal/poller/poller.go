@@ -1,6 +1,6 @@
 // Package poller periodically checks registries for image updates on apps that
 // have polling enabled, feeding any warranted deploys to the engine. It is the
-// fallback for registries that can't deliver webhooks (e.g. reg.dodd.rocks).
+// fallback for registries that can't deliver webhooks (e.g. registry.example.com).
 package poller
 
 import (

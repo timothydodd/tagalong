@@ -52,14 +52,14 @@ func newPoller(reg Registry, eng Engine, k8s K8s) *Poller {
 
 func TestPollLatestDigestChange(t *testing.T) {
 	app := model.App{
-		ID: 1, Name: "linqlit", ImageRepo: "reg.dodd.rocks/robododd/linqlit",
+		ID: 1, Name: "linqlit", ImageRepo: "registry.example.com/robododd/linqlit",
 		TagStrategy: model.StrategyLatest, Enabled: true, PollEnabled: true,
 		LastSeenDigest: "sha256:old",
 		Targets:        []model.Target{{Namespace: "linqlit", Name: "api", Container: "api"}},
 	}
 	reg := &fakeRegistry{digest: "sha256:new"}
 	eng := &fakeEngine{}
-	p := newPoller(reg, eng, &fakeK8s{image: "reg.dodd.rocks/robododd/linqlit:latest"})
+	p := newPoller(reg, eng, &fakeK8s{image: "registry.example.com/robododd/linqlit:latest"})
 
 	p.pollApp(context.Background(), app)
 

@@ -182,7 +182,7 @@ export default function Settings() {
       <div className="card">
         <div className="section-title">Registry credentials</div>
         <div className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
-          Used for polling private registries (e.g. <code>reg.dodd.rocks</code>) and higher Docker
+          Used for polling private registries (e.g. <code>registry.example.com</code>) and higher Docker
           Hub rate limits. Public repos need no credentials.
         </div>
         {creds.length > 0 && (
@@ -214,7 +214,7 @@ export default function Settings() {
         <div className="row-4" style={{ gridTemplateColumns: "1.2fr 1fr 1fr auto" }}>
           <input
             type="text"
-            placeholder="reg.dodd.rocks"
+            placeholder="registry.example.com"
             value={newCred.registry}
             onChange={(e) => setNewCred({ ...newCred, registry: e.target.value })}
           />

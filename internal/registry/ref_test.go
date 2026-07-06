@@ -16,7 +16,7 @@ func TestParseRef(t *testing.T) {
 		{"mysql", "docker.io", "library/mysql", "", ""},
 		{"ghcr.io/timothydodd/thorngate:0.6", "ghcr.io", "timothydodd/thorngate", "0.6", ""},
 		{"ghcr.io/timothydodd/cadence/api:sha-33cefd3", "ghcr.io", "timothydodd/cadence/api", "sha-33cefd3", ""},
-		{"reg.dodd.rocks/robododd/linqlit:728c9810", "reg.dodd.rocks", "robododd/linqlit", "728c9810", ""},
+		{"registry.example.com/robododd/linqlit:728c9810", "registry.example.com", "robododd/linqlit", "728c9810", ""},
 		{"docker.io/timdoddcool/terraria-proxy:latest", "docker.io", "timdoddcool/terraria-proxy", "latest", ""},
 		{"localhost:5000/app:v1", "localhost:5000", "app", "v1", ""},
 		{"repo@sha256:deadbeef", "docker.io", "library/repo", "", "sha256:deadbeef"},
@@ -36,7 +36,7 @@ func TestNormalizeRepo(t *testing.T) {
 		"timdoddcool/filelink:abc":           "docker.io/timdoddcool/filelink",
 		"mysql:8.4":                          "docker.io/library/mysql",
 		"ghcr.io/timothydodd/cadence/api:x":  "ghcr.io/timothydodd/cadence/api",
-		"reg.dodd.rocks/robododd/linqlit:x":  "reg.dodd.rocks/robododd/linqlit",
+		"registry.example.com/robododd/linqlit:x":  "registry.example.com/robododd/linqlit",
 	}
 	for in, want := range tests {
 		if got := NormalizeRepo(in); got != want {

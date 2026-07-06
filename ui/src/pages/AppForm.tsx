@@ -437,7 +437,7 @@ export default function AppForm() {
                         .filter(Boolean),
                     })
                   }
-                  placeholder="https://robo.dodd.rocks/"
+                  placeholder="https://app.example.com/"
                 />
               </div>
             )}
