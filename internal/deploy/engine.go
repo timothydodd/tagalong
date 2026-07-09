@@ -171,14 +171,46 @@ func (e *Engine) run(ctx context.Context, job Job) model.DeployEvent {
 		}
 	}
 	if e.purger != nil && app.CFPurge.Enabled {
-		if perr := e.purger.Purge(ctx, app); perr != nil {
-			e.log.Warn("cloudflare purge failed", "app", app.Name, "err", perr)
-			ev.Detail = "deployed; cloudflare purge failed: " + perr.Error()
-		} else {
-			ev.CFPurged = true
-		}
+		e.schedulePurge(app, job.Trigger)
 	}
 	return e.finish(ev, model.StatusSuccess, ev.Detail)
+}
+
+// schedulePurge records the app's Cloudflare purge as its own history event and
+// fires it after the app's configured delay (default 5 minutes). It runs
+// detached from the deploy: the timer is in-memory only, so a service restart
+// abandons it and SweepStale later marks the pending purge event "unknown".
+func (e *Engine) schedulePurge(app model.App, trigger string) {
+	delay := app.CFPurge.Delay()
+	pev := model.DeployEvent{
+		AppID:   &app.ID,
+		AppName: app.Name,
+		Trigger: trigger,
+		Action:  model.ActionPurge,
+		Status:  model.StatusPending,
+	}
+	if delay > 0 {
+		pev.Detail = fmt.Sprintf("cloudflare purge scheduled in %s", delay)
+	}
+	pev, err := e.store.CreateEvent(pev)
+	if err != nil {
+		e.log.Error("create purge event", "app", app.Name, "err", err)
+		return
+	}
+	e.bus.Publish(pev)
+
+	go func() {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		if perr := e.purger.Purge(context.Background(), app); perr != nil {
+			e.log.Warn("cloudflare purge failed", "app", app.Name, "err", perr)
+			e.finish(pev, model.StatusFailed, "cloudflare purge failed: "+perr.Error())
+			return
+		}
+		pev.CFPurged = true
+		e.finish(pev, model.StatusSuccess, "cloudflare cache purged")
+	}()
 }
 
 func (e *Engine) finish(ev model.DeployEvent, status, detail string) model.DeployEvent {

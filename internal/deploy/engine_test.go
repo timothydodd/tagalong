@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/timothydodd/tagalong/internal/events"
 	"github.com/timothydodd/tagalong/internal/model"
@@ -125,15 +127,41 @@ func TestDeploySyncRestart(t *testing.T) {
 	}
 }
 
-// fakePurger records whether Purge was called.
+// fakePurger records whether Purge was called. It is invoked from the engine's
+// detached purge goroutine, so access is mutex-guarded.
 type fakePurger struct {
+	mu     sync.Mutex
 	called bool
 	err    error
 }
 
 func (f *fakePurger) Purge(ctx context.Context, app model.App) error {
+	f.mu.Lock()
 	f.called = true
+	f.mu.Unlock()
 	return f.err
+}
+
+func (f *fakePurger) wasCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
+}
+
+// waitForPurgeEvent polls the store for a terminal purge history event.
+func waitForPurgeEvent(t *testing.T, st *store.Store, appID int64) model.DeployEvent {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		evs, _ := st.ListEvents(appID, 0, 50)
+		for _, e := range evs {
+			if e.Action == model.ActionPurge && e.Status != model.StatusPending {
+				return e
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for purge history event")
+	return model.DeployEvent{}
 }
 
 func TestDeploySyncRunsCloudflarePurge(t *testing.T) {
@@ -149,10 +177,11 @@ func TestDeploySyncRunsCloudflarePurge(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	engine := NewEngine(NewK8sWithClient(cs), st, events.NewBus(), purger, log)
 
+	noDelay := 0
 	app, _ := st.CreateApp(model.App{
 		Name: "robo-dash", ImageRepo: "docker.io/timdoddcool/robo-dash",
 		TagStrategy: model.StrategyExact, Enabled: true,
-		CFPurge: model.CFPurge{Enabled: true, ZoneID: "z", Mode: model.CFModeEverything},
+		CFPurge: model.CFPurge{Enabled: true, ZoneID: "z", Mode: model.CFModeEverything, DelaySeconds: &noDelay},
 		Targets: []model.Target{{Namespace: "default", Kind: model.KindDeployment, Name: "robo-dash", Container: "robo-dash"}},
 	})
 
@@ -160,11 +189,20 @@ func TestDeploySyncRunsCloudflarePurge(t *testing.T) {
 	if ev.Status != model.StatusSuccess {
 		t.Fatalf("expected success, got %s: %s", ev.Status, ev.Detail)
 	}
-	if !purger.called {
-		t.Error("expected purger to be called")
+
+	// The purge now runs asynchronously and is logged as its own history event.
+	purgeEv := waitForPurgeEvent(t, st, app.ID)
+	if purgeEv.Status != model.StatusSuccess {
+		t.Fatalf("expected purge event success, got %s: %s", purgeEv.Status, purgeEv.Detail)
 	}
-	if !ev.CFPurged {
-		t.Error("expected cf_purged to be true on event")
+	if !purgeEv.CFPurged {
+		t.Error("expected cf_purged to be true on the purge event")
+	}
+	if purgeEv.Trigger != model.TriggerManual {
+		t.Errorf("expected purge event to inherit deploy trigger, got %q", purgeEv.Trigger)
+	}
+	if !purger.wasCalled() {
+		t.Error("expected purger to be called")
 	}
 }
 

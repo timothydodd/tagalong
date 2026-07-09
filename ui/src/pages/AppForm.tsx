@@ -441,9 +441,25 @@ export default function AppForm() {
                 />
               </div>
             )}
+            <div className="form-row">
+              <label>Delay before purge (minutes)</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={Math.round((app.cf_purge?.delay_seconds ?? 300) / 60)}
+                onChange={(e) =>
+                  setCF({
+                    delay_seconds: Math.max(0, Math.round(Number(e.target.value) || 0)) * 60,
+                  })
+                }
+              />
+              <div className="hint">Wait this long after a successful deploy before purging. 0 = purge immediately.</div>
+            </div>
             <div className="hint">
               Requires a Cloudflare API token in <b>Settings</b>. Free plan supports
-              purge-everything and URL lists (chunked at 30).
+              purge-everything and URL lists (chunked at 30). The purge is recorded as its
+              own entry in the deploy history.
             </div>
           </>
         )}

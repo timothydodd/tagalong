@@ -296,6 +296,8 @@ export default function AppDetail() {
                   <td>
                     {e.action === "restart" ? (
                       <span className="muted">restart</span>
+                    ) : e.action === "purge" ? (
+                      <span className="muted">cloudflare purge</span>
                     ) : (
                       <span className="mono" style={{ fontSize: 12 }}>
                         {e.old_image ? tagOf(e.old_image) : "—"}{" "}
