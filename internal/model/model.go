@@ -34,6 +34,7 @@ const (
 	ActionPatch   = "patch"
 	ActionRestart = "restart"
 	ActionSkipped = "skipped"
+	ActionPurge   = "purge" // Cloudflare cache purge, recorded as its own history event
 )
 
 // Deploy event statuses.
@@ -52,6 +53,10 @@ const (
 	CFModeURLs       = "urls"
 )
 
+// CFDefaultDelaySeconds is how long to wait before firing the purge when an app
+// leaves the delay unset (5 minutes).
+const CFDefaultDelaySeconds = 300
+
 // StrategyConf is the per-strategy configuration blob stored as JSON.
 type StrategyConf struct {
 	// Pattern is a regexp used by exact/regex strategies to match acceptable tags.
@@ -68,6 +73,22 @@ type CFPurge struct {
 	ZoneID  string   `json:"zone_id,omitempty"`
 	Mode    string   `json:"mode,omitempty"` // everything | urls
 	URLs    []string `json:"urls,omitempty"`
+	// DelaySeconds delays the purge after a successful deploy. nil means use
+	// CFDefaultDelaySeconds; 0 means purge immediately.
+	DelaySeconds *int `json:"delay_seconds,omitempty"`
+}
+
+// Delay returns how long to wait before firing the purge. An unset delay
+// defaults to CFDefaultDelaySeconds; a negative value is treated as 0.
+func (c CFPurge) Delay() time.Duration {
+	secs := CFDefaultDelaySeconds
+	if c.DelaySeconds != nil {
+		secs = *c.DelaySeconds
+	}
+	if secs < 0 {
+		secs = 0
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // Target is a single k8s workload+container that an App updates.

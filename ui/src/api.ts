@@ -15,6 +15,9 @@ export interface CFPurge {
   zone_id?: string;
   mode?: "everything" | "urls";
   urls?: string[];
+  // Delay before the purge fires after a successful deploy. Omitted defaults to
+  // 300s (5 min) on the backend; 0 means purge immediately.
+  delay_seconds?: number;
 }
 
 export interface Target {
