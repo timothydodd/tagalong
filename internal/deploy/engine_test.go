@@ -206,6 +206,65 @@ func TestDeploySyncRunsCloudflarePurge(t *testing.T) {
 	}
 }
 
+func TestReconcileStartupConfirmsSelfPatch(t *testing.T) {
+	// tagalong deploys itself: the rollout kills the pod mid-flight, leaving the
+	// patch event in "rolling". On the next boot the live image already matches
+	// the event's target, so reconciliation must confirm success (not "unknown").
+	dep := readyDeployment("default", "tagalong", "tagalong", "reg/tagalong:v2")
+	engine, st, _ := newTestEngine(t, dep)
+
+	app, _ := st.CreateApp(model.App{
+		Name: "tagalong", ImageRepo: "reg/tagalong", TagStrategy: model.StrategyExact, Enabled: true,
+		Targets: []model.Target{{Namespace: "default", Kind: model.KindDeployment, Name: "tagalong", Container: "tagalong"}},
+	})
+
+	matched, _ := st.CreateEvent(model.DeployEvent{
+		AppID: &app.ID, AppName: app.Name, Trigger: model.TriggerManual,
+		Action: model.ActionPatch, NewImage: "reg/tagalong:v2", Status: model.StatusRolling,
+	})
+	unmatched, _ := st.CreateEvent(model.DeployEvent{
+		AppID: &app.ID, AppName: app.Name, Trigger: model.TriggerManual,
+		Action: model.ActionPatch, NewImage: "reg/tagalong:v3", Status: model.StatusRolling,
+	})
+
+	engine.ReconcileStartup(context.Background())
+
+	if got, _ := st.GetEvent(matched.ID); got.Status != model.StatusSuccess {
+		t.Errorf("matched event: expected success, got %s (%s)", got.Status, got.Detail)
+	}
+	if got, _ := st.GetEvent(unmatched.ID); got.Status != model.StatusUnknown {
+		t.Errorf("unmatched event: expected unknown, got %s", got.Status)
+	}
+}
+
+func TestReconcileStartupConfirmsSelfRestart(t *testing.T) {
+	// A "latest"-strategy self-deploy uses a rollout-restart (no new image). On
+	// the next boot the restart annotation is present and newer than the event,
+	// so reconciliation confirms success.
+	dep := readyDeployment("default", "tagalong", "tagalong", "reg/tagalong:latest")
+	engine, st, _ := newTestEngine(t, dep)
+
+	app, _ := st.CreateApp(model.App{
+		Name: "tagalong", ImageRepo: "reg/tagalong", TagStrategy: model.StrategyLatest, Enabled: true,
+		Targets: []model.Target{{Namespace: "default", Kind: model.KindDeployment, Name: "tagalong", Container: "tagalong"}},
+	})
+
+	ev, _ := st.CreateEvent(model.DeployEvent{
+		AppID: &app.ID, AppName: app.Name, Trigger: model.TriggerPoll,
+		Action: model.ActionRestart, Status: model.StatusRolling,
+	})
+	// The interrupted process applied the restart before it died.
+	if err := engine.k8s.RestartRollout(context.Background(), app.Targets[0], time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	engine.ReconcileStartup(context.Background())
+
+	if got, _ := st.GetEvent(ev.ID); got.Status != model.StatusSuccess {
+		t.Errorf("expected success, got %s (%s)", got.Status, got.Detail)
+	}
+}
+
 func TestDeploySyncMissingWorkload(t *testing.T) {
 	engine, st, _ := newTestEngine(t) // no deployments seeded
 

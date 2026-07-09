@@ -170,6 +170,9 @@ func (k *K8s) PatchImage(ctx context.Context, t model.Target, image string) erro
 	return k.patch(ctx, t, patch)
 }
 
+// restartedAtAnnotation is the standard rollout-restart marker on a pod template.
+const restartedAtAnnotation = "kubectl.kubernetes.io/restartedAt"
+
 // RestartRollout triggers a rolling restart by setting the standard
 // kubectl.kubernetes.io/restartedAt annotation on the pod template.
 func (k *K8s) RestartRollout(ctx context.Context, t model.Target, now time.Time) error {
@@ -181,13 +184,46 @@ func (k *K8s) RestartRollout(ctx context.Context, t model.Target, now time.Time)
 			"template": map[string]any{
 				"metadata": map[string]any{
 					"annotations": map[string]any{
-						"kubectl.kubernetes.io/restartedAt": now.UTC().Format(time.RFC3339),
+						restartedAtAnnotation: now.UTC().Format(time.RFC3339),
 					},
 				},
 			},
 		},
 	}
 	return k.patch(ctx, t, patch)
+}
+
+// TemplateRestartedAt returns the rollout-restart timestamp currently set on the
+// target's pod template, if any. Used at startup to confirm that a restart that
+// was interrupted (e.g. tagalong restarting itself) actually took effect.
+func (k *K8s) TemplateRestartedAt(ctx context.Context, t model.Target) (time.Time, bool, error) {
+	if k.cs == nil {
+		return time.Time{}, false, ErrNoCluster
+	}
+	var ann map[string]string
+	switch t.Kind {
+	case model.KindStatefulSet:
+		ss, err := k.cs.AppsV1().StatefulSets(t.Namespace).Get(ctx, t.Name, metav1.GetOptions{})
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		ann = ss.Spec.Template.Annotations
+	default:
+		d, err := k.cs.AppsV1().Deployments(t.Namespace).Get(ctx, t.Name, metav1.GetOptions{})
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		ann = d.Spec.Template.Annotations
+	}
+	v := ann[restartedAtAnnotation]
+	if v == "" {
+		return time.Time{}, false, nil
+	}
+	ts, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, false, nil
+	}
+	return ts, true, nil
 }
 
 func (k *K8s) patch(ctx context.Context, t model.Target, patch map[string]any) error {

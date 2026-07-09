@@ -23,6 +23,9 @@ type Store interface {
 	UpdateEvent(model.DeployEvent) error
 	SetLastSeen(id int64, tag, digest string) error
 	GetSetting(key string) (string, error)
+	GetApp(id int64) (model.App, error)
+	ListInterrupted() ([]model.DeployEvent, error)
+	SweepStale() (int64, error)
 }
 
 // Purger runs a post-deploy cache purge for an app. Implemented by the
@@ -93,6 +96,70 @@ func (e *Engine) Enqueue(job Job) {
 // by the manual-deploy API so the caller gets an immediate result.
 func (e *Engine) DeploySync(ctx context.Context, job Job) model.DeployEvent {
 	return e.run(ctx, job)
+}
+
+// ReconcileStartup resolves deploy events left in-flight by a previous process.
+// The common case is tagalong deploying itself: the rollout kills the pod
+// running the deploy before it can record success, leaving the event in
+// pending/rolling. Rather than blindly marking these "unknown", it inspects the
+// live workload and, if the target reached the event's desired state (patched
+// image is live, or the restart annotation was applied), marks it success; a
+// failing rollout is marked failed. Without a reachable cluster it falls back to
+// sweeping them to "unknown". Call once at startup, before new deploys begin.
+func (e *Engine) ReconcileStartup(ctx context.Context) {
+	if e.k8s == nil || !e.k8s.Configured() {
+		if n, err := e.store.SweepStale(); err != nil {
+			e.log.Warn("sweep stale events", "err", err)
+		} else if n > 0 {
+			e.log.Info("swept stale in-flight events", "count", n)
+		}
+		return
+	}
+	events, err := e.store.ListInterrupted()
+	if err != nil {
+		e.log.Warn("list interrupted events", "err", err)
+		return
+	}
+	for _, ev := range events {
+		status, detail := e.reconcileEvent(ctx, ev)
+		e.finish(ev, status, detail)
+		e.log.Info("reconciled interrupted deploy event", "app", ev.AppName, "id", ev.ID, "status", status)
+	}
+}
+
+// reconcileEvent decides the terminal status of a single interrupted event by
+// comparing the event's intent against the live workload's desired spec (not pod
+// readiness, which may not be settled while tagalong itself is still starting).
+func (e *Engine) reconcileEvent(ctx context.Context, ev model.DeployEvent) (status, detail string) {
+	const interrupted = "interrupted (service restart)"
+	if ev.AppID == nil {
+		return model.StatusUnknown, interrupted
+	}
+	app, err := e.store.GetApp(*ev.AppID)
+	if err != nil || len(app.Targets) == 0 {
+		return model.StatusUnknown, interrupted
+	}
+	applied := true
+	for _, t := range app.Targets {
+		if st, serr := e.k8s.rolloutStatus(ctx, t); serr == nil && st.Failed {
+			return model.StatusFailed, "rollout failed: " + st.Message
+		}
+		if ev.Action == model.ActionRestart {
+			ra, ok, _ := e.k8s.TemplateRestartedAt(ctx, t)
+			if !ok || ra.Before(ev.StartedAt) {
+				applied = false
+			}
+		} else {
+			img, ierr := e.k8s.CurrentImage(ctx, t)
+			if ierr != nil || ev.NewImage == "" || img != ev.NewImage {
+				applied = false
+			}
+		}
+	}
+	if applied {
+		return model.StatusSuccess, "completed (confirmed after tagalong restarted)"
+	}
+	return model.StatusUnknown, interrupted
 }
 
 func (e *Engine) worker(appID int64, q chan Job) {

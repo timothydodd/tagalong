@@ -37,12 +37,6 @@ func main() {
 	}
 	defer st.Close()
 
-	if n, err := st.SweepStale(); err != nil {
-		log.Warn("sweep stale events", "err", err)
-	} else if n > 0 {
-		log.Info("swept stale in-flight events", "count", n)
-	}
-
 	// Ensure a portal login exists (default admin/admin on a fresh DB).
 	if err := httpapi.SeedAdmin(st, log); err != nil {
 		log.Error("seed admin account", "err", err)
@@ -70,6 +64,11 @@ func main() {
 		return st.GetSetting(model.KeyCloudflareAPIToken)
 	})
 	engine := deploy.NewEngine(k8s, st, bus, purger, log)
+
+	// Resolve events left in-flight by the previous process. A self-deploy kills
+	// the pod mid-rollout, so confirm those against the live cluster (marking them
+	// success where the rollout actually landed) instead of always "unknown".
+	engine.ReconcileStartup(context.Background())
 
 	handler := httpapi.NewServer(st, engine, k8s, bus, reg, log)
 

@@ -94,6 +94,28 @@ func (s *Store) ListEvents(appID, beforeID int64, limit int) ([]model.DeployEven
 	return events, rows.Err()
 }
 
+// ListInterrupted returns events left in pending/rolling by a previous process
+// (e.g. a crash, or tagalong restarting itself mid-rollout), oldest-first so
+// startup reconciliation processes them in order.
+func (s *Store) ListInterrupted() ([]model.DeployEvent, error) {
+	rows, err := s.db.Query(`SELECT id, app_id, app_name, trigger, action, old_image, new_image,
+		status, detail, cf_purged, started_at, finished_at FROM deploy_events
+		WHERE status IN (?, ?) ORDER BY id ASC`, model.StatusPending, model.StatusRolling)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := []model.DeployEvent{}
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
 // SweepStale marks any events left in pending/rolling (e.g. from a crash) as
 // unknown. Called once at startup. Returns the number of rows updated.
 func (s *Store) SweepStale() (int64, error) {
