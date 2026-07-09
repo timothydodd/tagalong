@@ -1,0 +1,402 @@
+{
+	"info": {
+		"name": "tagalong",
+		"description": "REST API for tagalong — self-hosted continuous deployment for a single-node k3s cluster.\n\n## Getting started\n1. Set the `baseUrl` variable (defaults to `http://localhost:8080`).\n2. Run **Auth → Login** first. The session is a `tagalong_session` cookie which Postman stores and sends automatically — no token setup needed. Fresh installs seed `admin` / `admin`.\n3. Run **Apps → Create App**. Its test script saves `appId` and `webhookToken` collection variables, which the other requests use.\n\nEverything under `/api` except healthz/login/logout/me requires the session cookie (401 otherwise).",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{ "key": "baseUrl", "value": "http://localhost:8080" },
+		{ "key": "username", "value": "admin" },
+		{ "key": "password", "value": "admin" },
+		{ "key": "appId", "value": "1" },
+		{ "key": "webhookToken", "value": "" },
+		{ "key": "githubSecret", "value": "", "description": "Must match the github_webhook_secret setting. Leave empty if unset (signature validation is skipped)." }
+	],
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Health check",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/healthz", "host": ["{{baseUrl}}"], "path": ["api", "healthz"] },
+						"description": "Liveness probe. Public, no auth. Returns {\"status\":\"ok\"}."
+					}
+				},
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('login ok', () => pm.response.to.have.status(200));",
+									"// Session cookie (tagalong_session) is stored automatically by Postman."
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/api/login", "host": ["{{baseUrl}}"], "path": ["api", "login"] },
+						"description": "Issues the tagalong_session cookie (7-day TTL). Response includes must_change_password when the default admin/admin password is still in place. Run this before any other request."
+					}
+				},
+				{
+					"name": "Me",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/me", "host": ["{{baseUrl}}"], "path": ["api", "me"] },
+						"description": "Returns the current session ({username, must_change_password}) or 401 if not logged in."
+					}
+				},
+				{
+					"name": "Change password",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"current_password\": \"admin\",\n  \"new_password\": \"a-new-password\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/api/account/password", "host": ["{{baseUrl}}"], "path": ["api", "account", "password"] },
+						"description": "New password must be at least 8 characters. 403 if current_password is wrong. Re-issues the session cookie so the login stays valid."
+					}
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/api/logout", "host": ["{{baseUrl}}"], "path": ["api", "logout"] },
+						"description": "Clears the session cookie."
+					}
+				}
+			]
+		},
+		{
+			"name": "Apps",
+			"item": [
+				{
+					"name": "List apps",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/apps", "host": ["{{baseUrl}}"], "path": ["api", "apps"] }
+					}
+				},
+				{
+					"name": "Create app",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('created', () => pm.response.to.have.status(201));",
+									"const app = pm.response.json();",
+									"pm.collectionVariables.set('appId', String(app.id));",
+									"pm.collectionVariables.set('webhookToken', app.webhook_token);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"demo-app\",\n  \"image_repo\": \"timdoddcool/robo-dash\",\n  \"tag_strategy\": \"exact\",\n  \"strategy_conf\": {\n    \"pattern\": \"^[0-9a-f]{7,12}$\"\n  },\n  \"targets\": [\n    {\n      \"namespace\": \"default\",\n      \"kind\": \"Deployment\",\n      \"name\": \"demo-app\",\n      \"container\": \"web\"\n    }\n  ],\n  \"poll_enabled\": false,\n  \"poll_interval_sec\": 300,\n  \"cf_purge\": {\n    \"enabled\": false,\n    \"zone_id\": \"\",\n    \"mode\": \"urls\",\n    \"urls\": []\n  },\n  \"enabled\": true\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/api/apps", "host": ["{{baseUrl}}"], "path": ["api", "apps"] },
+						"description": "name and image_repo are required. image_repo is normalized on save (e.g. `timdoddcool/robo-dash` → `docker.io/timdoddcool/robo-dash`). tag_strategy: exact | regex | latest | semver (default exact). strategy_conf per strategy: pattern (exact/regex), track_tag (latest, default \"latest\"), constraint (semver, e.g. \">=0.6\").\n\nThe test script saves the returned id and webhook_token into the appId / webhookToken collection variables."
+					}
+				},
+				{
+					"name": "Get app",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}"] }
+					}
+				},
+				{
+					"name": "Update app",
+					"request": {
+						"method": "PUT",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"demo-app\",\n  \"image_repo\": \"docker.io/timdoddcool/robo-dash\",\n  \"tag_strategy\": \"semver\",\n  \"strategy_conf\": {\n    \"constraint\": \">=1.0\"\n  },\n  \"targets\": [\n    {\n      \"namespace\": \"default\",\n      \"kind\": \"Deployment\",\n      \"name\": \"demo-app\",\n      \"container\": \"web\"\n    }\n  ],\n  \"poll_enabled\": true,\n  \"poll_interval_sec\": 300,\n  \"cf_purge\": {\n    \"enabled\": false\n  },\n  \"enabled\": true\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}"] },
+						"description": "Full replace — send the whole app, not a partial patch. Same validation as create."
+					}
+				},
+				{
+					"name": "Delete app",
+					"request": {
+						"method": "DELETE",
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}"] },
+						"description": "204 on success, 404 if the id doesn't exist."
+					}
+				},
+				{
+					"name": "Deploy — specific tag",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"tag\": \"v1.2.3\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}/deploy", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}", "deploy"] },
+						"description": "Manual deploy of a specific tag: patches the target image to image_repo:tag and waits for the rollout (synchronous, up to 6 minutes — raise Postman's timeout if needed). Returns the DeployEvent; 502 if the rollout failed."
+					}
+				},
+				{
+					"name": "Deploy — rollout restart",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{}" },
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}/deploy", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}", "deploy"] },
+						"description": "Empty body (no tag) = rollout-restart the current image. Needs imagePullPolicy: Always to actually pick up a re-pushed tag."
+					}
+				},
+				{
+					"name": "Rotate webhook token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('rotated', () => pm.response.to.have.status(200));",
+									"pm.collectionVariables.set('webhookToken', pm.response.json().webhook_token);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}/token/rotate", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}", "token", "rotate"] },
+						"description": "Generates a new per-app webhook token (invalidates the old Docker Hub webhook URL). The test script updates the webhookToken variable."
+					}
+				},
+				{
+					"name": "App status",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}/status", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}", "status"] },
+						"description": "Live rollout status of each target workload, straight from the cluster."
+					}
+				},
+				{
+					"name": "App tags (registry)",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}/tags", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}", "tags"] },
+						"description": "Lists tags from the app's registry. 503 if the registry client isn't configured, 502 if the registry call fails."
+					}
+				},
+				{
+					"name": "Export all apps (YAML)",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/apps/export", "host": ["{{baseUrl}}"], "path": ["api", "apps", "export"] },
+						"description": "All apps as one YAML document: {apps: [...]}. Server-managed fields (id, timestamps, last_seen_*) are omitted."
+					}
+				},
+				{
+					"name": "Export one app (YAML)",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}/export", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}", "export"] }
+					}
+				},
+				{
+					"name": "Import apps (YAML)",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/x-yaml" }],
+						"body": {
+							"mode": "raw",
+							"raw": "apps:\n  - name: demo-app\n    image_repo: docker.io/timdoddcool/robo-dash\n    tag_strategy: exact\n    strategy_conf:\n      pattern: \"^[0-9a-f]{7,12}$\"\n    targets:\n      - namespace: default\n        kind: Deployment\n        name: demo-app\n        container: web\n    poll_enabled: false\n    enabled: true\n"
+						},
+						"url": { "raw": "{{baseUrl}}/api/apps/import", "host": ["{{baseUrl}}"], "path": ["api", "apps", "import"] },
+						"description": "Upserts a {apps: [...]} document. Apps match by name (case-insensitive): existing → update, new → create; nothing is deleted. The whole document validates before any write. Omitting webhook_token on an existing app preserves its current token. Returns {created, updated, apps}."
+					}
+				},
+				{
+					"name": "Replace app from YAML",
+					"request": {
+						"method": "PUT",
+						"header": [{ "key": "Content-Type", "value": "application/x-yaml" }],
+						"body": {
+							"mode": "raw",
+							"raw": "name: demo-app\nimage_repo: docker.io/timdoddcool/robo-dash\ntag_strategy: latest\nstrategy_conf:\n  track_tag: latest\ntargets:\n  - namespace: default\n    kind: Deployment\n    name: demo-app\n    container: web\npoll_enabled: true\npoll_interval_sec: 300\nenabled: true\n"
+						},
+						"url": { "raw": "{{baseUrl}}/api/apps/{{appId}}/yaml", "host": ["{{baseUrl}}"], "path": ["api", "apps", "{{appId}}", "yaml"] },
+						"description": "Replaces a single app (keyed by id, so renames are fine) from a bare YAML document. Omitting webhook_token keeps the existing one."
+					}
+				}
+			]
+		},
+		{
+			"name": "Cluster",
+			"item": [
+				{
+					"name": "List workloads",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/workloads", "host": ["{{baseUrl}}"], "path": ["api", "workloads"] },
+						"description": "Live Deployments/StatefulSets from the cluster — what the UI's \"Browse cluster\" uses to prefill a new app."
+					}
+				}
+			]
+		},
+		{
+			"name": "Events",
+			"item": [
+				{
+					"name": "List events",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/api/events?limit=50",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "events"],
+							"query": [
+								{ "key": "limit", "value": "50" },
+								{ "key": "app_id", "value": "{{appId}}", "disabled": true, "description": "Filter to one app" },
+								{ "key": "before_id", "value": "", "disabled": true, "description": "Pagination cursor: return events with id < before_id" }
+							]
+						},
+						"description": "Deploy history, newest first."
+					}
+				},
+				{
+					"name": "Stream events (SSE)",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Accept", "value": "text/event-stream" }],
+						"url": { "raw": "{{baseUrl}}/api/events/stream", "host": ["{{baseUrl}}"], "path": ["api", "events", "stream"] },
+						"description": "Server-Sent Events stream of deploy events (event: deploy_event). Note: Postman holds the connection open until you cancel — it won't render events incrementally like a browser. Useful mainly to confirm the endpoint responds; use curl -N for real streaming."
+					}
+				}
+			]
+		},
+		{
+			"name": "Settings",
+			"item": [
+				{
+					"name": "Get settings",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/settings", "host": ["{{baseUrl}}"], "path": ["api", "settings"] },
+						"description": "cloudflare_api_token comes back masked as ******** when set; github_webhook_secret is returned in the clear (operators need to paste it into GitHub)."
+					}
+				},
+				{
+					"name": "Update settings",
+					"request": {
+						"method": "PUT",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"cloudflare_api_token\": \"********\",\n  \"github_webhook_secret\": \"{{githubSecret}}\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/api/settings", "host": ["{{baseUrl}}"], "path": ["api", "settings"] },
+						"description": "Echoing the masked value ******** leaves that stored secret unchanged; send a real value to replace it, or \"\" to clear it."
+					}
+				},
+				{
+					"name": "List registry credentials",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/api/settings/registries", "host": ["{{baseUrl}}"], "path": ["api", "settings", "registries"] },
+						"description": "Passwords come back masked as ********."
+					}
+				},
+				{
+					"name": "Upsert registry credential",
+					"request": {
+						"method": "PUT",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"registry\": \"registry.example.com\",\n  \"username\": \"deploy\",\n  \"password\": \"s3cret\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/api/settings/registries", "host": ["{{baseUrl}}"], "path": ["api", "settings", "registries"] },
+						"description": "204 on success. Echoing password ******** keeps the stored password."
+					}
+				},
+				{
+					"name": "Delete registry credential",
+					"request": {
+						"method": "DELETE",
+						"url": { "raw": "{{baseUrl}}/api/settings/registries/registry.example.com", "host": ["{{baseUrl}}"], "path": ["api", "settings", "registries", "registry.example.com"] },
+						"description": "The path segment is the registry host (URL-encode if it contains special characters). 204 on success."
+					}
+				}
+			]
+		},
+		{
+			"name": "Webhooks",
+			"description": "Public receivers (no session needed) — mounted at /hooks, not /api. They authenticate their own way: Docker Hub via the per-app token in the URL, GitHub via HMAC signature.",
+			"item": [
+				{
+					"name": "Docker Hub push",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"callback_url\": \"https://registry.hub.docker.com/u/timdoddcool/robo-dash/hook/abc123/\",\n  \"push_data\": {\n    \"tag\": \"v1.2.3\",\n    \"pusher\": \"timdoddcool\",\n    \"pushed_at\": 1751980800\n  },\n  \"repository\": {\n    \"repo_name\": \"timdoddcool/robo-dash\",\n    \"name\": \"robo-dash\"\n  }\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/hooks/dockerhub/{{webhookToken}}", "host": ["{{baseUrl}}"], "path": ["hooks", "dockerhub", "{{webhookToken}}"] },
+						"description": "Simulates a Docker Hub push webhook. The URL token identifies and authenticates the app (404 for unknown tokens). repository.repo_name is normalized to docker.io/<repo_name> and must equal the app's image_repo, or you get 400 \"payload repo does not match app\".\n\nResponses: 202 {status: deploying} when the tag passes the strategy, 200 {status: skipped, reason} when it doesn't.\n\nRun Apps → Create App (or Rotate webhook token) first so {{webhookToken}} is set."
+					}
+				},
+				{
+					"name": "GitHub package published (GHCR)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Sign the body if a github webhook secret is configured.",
+									"const secret = pm.collectionVariables.get('githubSecret');",
+									"if (secret) {",
+									"    const body = pm.request.body ? pm.request.body.raw : '';",
+									"    const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+									"    pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" },
+							{ "key": "X-GitHub-Event", "value": "registry_package" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"action\": \"published\",\n  \"registry_package\": {\n    \"name\": \"robo-dash\",\n    \"namespace\": \"timothydodd\",\n    \"package_type\": \"CONTAINER\",\n    \"package_version\": {\n      \"version\": \"v1.2.3\",\n      \"package_url\": \"ghcr.io/timothydodd/robo-dash:v1.2.3\",\n      \"container_metadata\": {\n        \"tag\": {\n          \"name\": \"v1.2.3\",\n          \"digest\": \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n        }\n      }\n    }\n  }\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/hooks/github", "host": ["{{baseUrl}}"], "path": ["hooks", "github"] },
+						"description": "Simulates a GHCR registry_package publish. Matching is by normalized repo (ghcr.io/...) against a configured app's image_repo — to test end-to-end, create an app with image_repo ghcr.io/timothydodd/robo-dash.\n\nSignature: if the githubSecret collection variable is set, the pre-request script computes the X-Hub-Signature-256 HMAC automatically (it must match the github_webhook_secret setting). If the server-side secret is empty, validation is skipped.\n\nResponses: 202 deploying, 200 skipped/ignored (\"no app for <repo>\" for untracked packages), 401 invalid signature."
+					}
+				}
+			]
+		}
+	]
+}
