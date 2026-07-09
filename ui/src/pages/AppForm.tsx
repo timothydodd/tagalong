@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   api,
+  webhookBase,
   type App,
   type Target,
   type TagStrategy,
@@ -37,6 +38,7 @@ export default function AppForm() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [presetIdx, setPresetIdx] = useState(0);
+  const [hookBase, setHookBase] = useState(window.location.origin);
 
   // "Fill from a deployed workload" picker (new-app only).
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -44,6 +46,10 @@ export default function AppForm() {
   const [wlLoading, setWlLoading] = useState(false);
   const [wlError, setWlError] = useState<string | null>(null);
   const [wlQuery, setWlQuery] = useState("");
+
+  useEffect(() => {
+    api.getSettings().then((s) => setHookBase(webhookBase(s.public_base_url))).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -128,7 +134,7 @@ export default function AppForm() {
   };
 
   const strat = app.tag_strategy as TagStrategy;
-  const origin = window.location.origin;
+  const origin = hookBase;
 
   return (
     <>

@@ -146,12 +146,16 @@ type RegistryCred struct {
 type Settings struct {
 	CloudflareAPIToken  string `json:"cloudflare_api_token"`
 	GitHubWebhookSecret string `json:"github_webhook_secret"`
+	// PublicBaseURL is the externally reachable origin (e.g. https://tagalong.example.com)
+	// used to build webhook URLs shown in the UI. Empty falls back to the browser origin.
+	PublicBaseURL string `json:"public_base_url"`
 }
 
 // Settings keys.
 const (
 	KeyCloudflareAPIToken  = "cloudflare_api_token"
 	KeyGitHubWebhookSecret = "github_webhook_secret"
+	KeyPublicBaseURL       = "public_base_url"
 
 	// Portal auth. These are internal — never surfaced via /api/settings.
 	KeyAuthUsername          = "auth_username"

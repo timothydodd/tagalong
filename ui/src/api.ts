@@ -93,6 +93,14 @@ export interface Workload {
 export interface Settings {
   cloudflare_api_token: string;
   github_webhook_secret: string;
+  public_base_url: string;
+}
+
+// webhookBase returns the base URL for webhook links: the configured public base
+// URL when set, otherwise the browser's current origin. Trailing slashes trimmed.
+export function webhookBase(configured?: string): string {
+  const c = (configured ?? "").trim().replace(/\/+$/, "");
+  return c || window.location.origin;
 }
 
 export interface RegistryCred {

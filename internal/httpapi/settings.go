@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/timothydodd/tagalong/internal/model"
@@ -16,12 +17,14 @@ const maskedValue = "********"
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	cfToken, _ := s.store.GetSetting(model.KeyCloudflareAPIToken)
 	ghSecret, _ := s.store.GetSetting(model.KeyGitHubWebhookSecret)
+	baseURL, _ := s.store.GetSetting(model.KeyPublicBaseURL)
 	writeJSON(w, http.StatusOK, model.Settings{
 		CloudflareAPIToken: maskIfSet(cfToken),
 		// The GitHub webhook secret is returned in the clear: it's not an external
 		// credential, and operators need to read it back to paste into the GitHub
 		// webhook config. It is only reachable behind the portal login.
 		GitHubWebhookSecret: ghSecret,
+		PublicBaseURL:       baseURL,
 	})
 }
 
@@ -42,6 +45,11 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	}
+	// Public base URL is not a secret; store the trimmed value (empty clears it).
+	if err := s.store.SetSetting(model.KeyPublicBaseURL, strings.TrimRight(strings.TrimSpace(in.PublicBaseURL), "/")); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	s.getSettings(w, r)
 }

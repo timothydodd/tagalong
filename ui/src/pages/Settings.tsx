@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type RegistryCred, type Settings as SettingsT } from "../api";
+import { api, webhookBase, type RegistryCred, type Settings as SettingsT } from "../api";
 import { CopyField, ErrorBox } from "../components";
 import { useAuth } from "../auth";
 
@@ -84,6 +84,7 @@ export default function Settings() {
   const [settings, setSettings] = useState<SettingsT>({
     cloudflare_api_token: "",
     github_webhook_secret: "",
+    public_base_url: "",
   });
   const [creds, setCreds] = useState<RegistryCred[]>([]);
   const [newCred, setNewCred] = useState<RegistryCred>({ registry: "", username: "", password: "" });
@@ -162,12 +163,25 @@ export default function Settings() {
           </div>
         </div>
         <div className="form-row">
+          <label>Public base URL</label>
+          <input
+            type="text"
+            value={settings.public_base_url}
+            onChange={(e) => setSettings({ ...settings, public_base_url: e.target.value })}
+            placeholder={window.location.origin}
+          />
+          <div className="hint">
+            The externally reachable address of this portal (e.g.{" "}
+            <code>https://tagalong.example.com</code>). Used to build the webhook URLs shown
+            here and on each app. Leave blank to use the address in your browser.
+          </div>
+        </div>
+        <div className="form-row">
           <label>GitHub webhook payload URL</label>
-          <CopyField value={`${window.location.origin}/hooks/github`} />
+          <CopyField value={`${webhookBase(settings.public_base_url)}/hooks/github`} />
           <div className="hint">
             One URL for all apps — GitHub matches each by its <code>image_repo</code>. Content
-            type <code>application/json</code>, event <code>Packages</code>. Swap the host for
-            your public tagalong URL if you reach this portal on the LAN.
+            type <code>application/json</code>, event <code>Packages</code>.
           </div>
         </div>
         <button className="btn primary" onClick={saveSettings}>

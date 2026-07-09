@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
-import { api, type App, type DeployEvent, type TargetStatus } from "../api";
+import { api, webhookBase, type App, type DeployEvent, type TargetStatus } from "../api";
 import { CopyField, downloadText, ErrorBox, StatusBadge, timeAgo, tagOf } from "../components";
 import { useLiveEvents } from "../useEvents";
 
@@ -19,6 +19,7 @@ export default function AppDetail() {
   const [yamlText, setYamlText] = useState("");
   const [yamlBusy, setYamlBusy] = useState(false);
   const [yamlMsg, setYamlMsg] = useState<string | null>(null);
+  const [hookBase, setHookBase] = useState(window.location.origin);
 
   const events = useLiveEvents(initialEvents).filter((e) => e.app_id === appId);
 
@@ -28,6 +29,7 @@ export default function AppDetail() {
   useEffect(() => {
     api.getApp(appId).then(setApp).catch((e) => setError(String(e)));
     api.listEvents({ app_id: appId, limit: 50 }).then(setInitialEvents).catch(() => {});
+    api.getSettings().then((s) => setHookBase(webhookBase(s.public_base_url))).catch(() => {});
     loadStatus();
     const iv = setInterval(loadStatus, 5000);
     return () => clearInterval(iv);
@@ -160,13 +162,13 @@ export default function AppDetail() {
       <div className="card">
         <div className="section-title">Webhooks</div>
         <div className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
-          Point your registry at the URL for wherever it publishes. URLs use this
-          portal's address — if you reach the portal on the LAN but the registry is
-          external, swap the host for your public tagalong URL.
+          Point your registry at the URL for wherever it publishes. URLs use the
+          public base URL from <Link to="/settings">Settings</Link> (or this portal's
+          address if that's unset).
         </div>
         <div className="form-row">
           <label>Docker Hub</label>
-          <CopyField value={`${window.location.origin}/hooks/dockerhub/${app.webhook_token}`} />
+          <CopyField value={`${hookBase}/hooks/dockerhub/${app.webhook_token}`} />
           <div className="hint">
             Per-app URL — the token identifies this app. Docker Hub → the repo →
             <code>Webhooks</code>.
@@ -174,7 +176,7 @@ export default function AppDetail() {
         </div>
         <div className="form-row" style={{ marginBottom: 0 }}>
           <label>GitHub (GHCR)</label>
-          <CopyField value={`${window.location.origin}/hooks/github`} />
+          <CopyField value={`${hookBase}/hooks/github`} />
           <div className="hint">
             Shared URL — GitHub matches this app by <code>image_repo</code> (
             <span className="mono">{app.image_repo}</span>). Set the secret in{" "}
