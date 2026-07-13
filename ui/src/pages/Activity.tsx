@@ -6,7 +6,7 @@ import { useLiveEvents } from "../useEvents";
 
 export default function Activity() {
   const [initial, setInitial] = useState<DeployEvent[]>([]);
-  const events = useLiveEvents(initial);
+  const { events, connected } = useLiveEvents(initial);
 
   useEffect(() => {
     api.listEvents({ limit: 100 }).then(setInitial).catch(() => {});
@@ -18,8 +18,11 @@ export default function Activity() {
         <div>
           <h1>Activity</h1>
           <div className="sub flex">
-            <span className="badge success" style={{ background: "transparent" }}>
-              live
+            <span
+              className={`badge ${connected ? "success" : "unknown"}`}
+              style={{ background: "transparent" }}
+            >
+              {connected ? "live" : "reconnecting…"}
             </span>
             Deploy events across all apps, streamed in real time.
           </div>
@@ -30,6 +33,7 @@ export default function Activity() {
         {events.length === 0 ? (
           <div className="empty">No activity yet.</div>
         ) : (
+          <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -60,7 +64,7 @@ export default function Activity() {
                     {e.action === "restart" ? (
                       <span className="muted">restart</span>
                     ) : (
-                      <span className="mono" style={{ fontSize: 12 }}>
+                      <span className="mono trunc" style={{ fontSize: 12 }} title={e.new_image}>
                         {tagOf(e.new_image)}
                       </span>
                     )}
@@ -77,6 +81,7 @@ export default function Activity() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>

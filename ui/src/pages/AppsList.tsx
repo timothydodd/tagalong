@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type App } from "../api";
-import { downloadText, ErrorBox, StatusBadge, tagOf } from "../components";
+import { downloadText, errMsg, ErrorBox, StatusBadge, tagOf } from "../components";
 import type { DeployEvent } from "../api";
 import { useEventStream } from "../useEvents";
 
@@ -27,7 +27,7 @@ export default function AppsList() {
       }
       setLastEvent(byApp);
     } catch (e) {
-      setError(String(e));
+      setError(errMsg(e));
     }
   };
 
@@ -41,12 +41,13 @@ export default function AppsList() {
   });
 
   const deploy = async (app: App) => {
+    if (!confirm(`Rollout-restart "${app.name}" now?`)) return;
     setBusy(app.id);
     setError(null);
     try {
       await api.deploy(app.id); // no tag = rollout-restart
     } catch (e) {
-      setError(`Deploy ${app.name}: ${e}`);
+      setError(`Deploy ${app.name}: ${errMsg(e)}`);
     } finally {
       setBusy(null);
     }
@@ -57,7 +58,7 @@ export default function AppsList() {
       await api.updateApp(app.id, { ...app, enabled: !app.enabled });
       load();
     } catch (e) {
-      setError(String(e));
+      setError(errMsg(e));
     }
   };
 
@@ -66,7 +67,7 @@ export default function AppsList() {
     try {
       downloadText("tagalong-apps.yaml", await api.exportApps());
     } catch (e) {
-      setError(`Export: ${e}`);
+      setError(`Export: ${errMsg(e)}`);
     }
   };
 
@@ -81,7 +82,7 @@ export default function AppsList() {
       setImporting(false);
       load();
     } catch (e) {
-      setError(`Import: ${e}`);
+      setError(`Import: ${errMsg(e)}`);
     } finally {
       setImportBusy(false);
     }
@@ -147,6 +148,7 @@ export default function AppsList() {
             auto-deploying.
           </div>
         ) : (
+          <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -176,7 +178,7 @@ export default function AppsList() {
                       {app.last_seen_tag && (
                         <>
                           {" "}
-                          <span className="tag">{app.last_seen_tag}</span>
+                          <span className="tag" title={app.last_seen_tag}>{app.last_seen_tag}</span>
                         </>
                       )}
                     </td>
@@ -188,7 +190,7 @@ export default function AppsList() {
                         <div className="flex">
                           <StatusBadge status={ev.status} />
                           {ev.new_image && (
-                            <span className="tag">{tagOf(ev.new_image)}</span>
+                            <span className="tag" title={ev.new_image}>{tagOf(ev.new_image)}</span>
                           )}
                         </div>
                       ) : (
@@ -200,6 +202,7 @@ export default function AppsList() {
                         <input
                           type="checkbox"
                           checked={app.enabled}
+                          aria-label={`${app.enabled ? "Disable" : "Enable"} ${app.name}`}
                           onChange={() => toggleEnabled(app)}
                         />
                         <span className="slider" />
@@ -227,6 +230,7 @@ export default function AppsList() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>

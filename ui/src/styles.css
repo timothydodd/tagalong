@@ -126,6 +126,8 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
   margin-bottom: 16px;
 }
 
+/* Tables scroll inside their card on narrow screens instead of overflowing. */
+.table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th {
   text-align: left;
@@ -169,8 +171,23 @@ tbody tr:hover { background: var(--bg-elev); }
   background: var(--bg-elev2);
   border: 1px solid var(--border);
   color: var(--text-dim);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 .strat-badge { text-transform: capitalize; }
+
+/* Truncate long values (e.g. digest/hash tags) so they don't stretch tables. */
+.trunc {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 
 /* Forms */
 .form-row { margin-bottom: 16px; }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { api, webhookBase, type App, type DeployEvent, type TargetStatus } from "../api";
-import { CopyField, downloadText, ErrorBox, StatusBadge, timeAgo, tagOf } from "../components";
+import { CopyField, downloadText, errMsg, ErrorBox, StatusBadge, timeAgo, tagOf } from "../components";
 import { useLiveEvents } from "../useEvents";
 
 export default function AppDetail() {
@@ -9,6 +9,7 @@ export default function AppDetail() {
   const appId = Number(id);
   const nav = useNavigate();
   const [app, setApp] = useState<App | null>(null);
+  const [loading, setLoading] = useState(true);
   const [statuses, setStatuses] = useState<TargetStatus[]>([]);
   const [initialEvents, setInitialEvents] = useState<DeployEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -21,13 +22,17 @@ export default function AppDetail() {
   const [yamlMsg, setYamlMsg] = useState<string | null>(null);
   const [hookBase, setHookBase] = useState(window.location.origin);
 
-  const events = useLiveEvents(initialEvents).filter((e) => e.app_id === appId);
+  const events = useLiveEvents(initialEvents).events.filter((e) => e.app_id === appId);
 
   const loadStatus = () =>
     api.appStatus(appId).then(setStatuses).catch(() => {});
 
   useEffect(() => {
-    api.getApp(appId).then(setApp).catch((e) => setError(String(e)));
+    api
+      .getApp(appId)
+      .then(setApp)
+      .catch((e) => setError(errMsg(e)))
+      .finally(() => setLoading(false));
     api.listEvents({ app_id: appId, limit: 50 }).then(setInitialEvents).catch(() => {});
     api.getSettings().then((s) => setHookBase(webhookBase(s.public_base_url))).catch(() => {});
     loadStatus();
@@ -37,13 +42,17 @@ export default function AppDetail() {
   }, [appId]);
 
   const doDeploy = async (t?: string) => {
+    const what = t
+      ? `Deploy tag "${t}" to "${app?.name}"?`
+      : `Rollout-restart "${app?.name}" now?`;
+    if (!confirm(what)) return;
     setDeploying(true);
     setError(null);
     try {
       await api.deploy(appId, t);
       loadStatus();
     } catch (e) {
-      setError(String(e));
+      setError(errMsg(e));
     } finally {
       setDeploying(false);
     }
@@ -53,14 +62,18 @@ export default function AppDetail() {
     try {
       setTags(await api.appTags(appId));
     } catch (e) {
-      setError(`Load tags: ${e}`);
+      setError(`Load tags: ${errMsg(e)}`);
     }
   };
 
   const del = async () => {
     if (!confirm(`Delete app "${app?.name}"? History is kept.`)) return;
-    await api.deleteApp(appId);
-    nav("/");
+    try {
+      await api.deleteApp(appId);
+      nav("/");
+    } catch (e) {
+      setError(`Delete: ${errMsg(e)}`);
+    }
   };
 
   const openYaml = async () => {
@@ -70,7 +83,7 @@ export default function AppDetail() {
       setYamlText(await api.exportApp(appId));
       setYamlOpen(true);
     } catch (e) {
-      setError(`Load YAML: ${e}`);
+      setError(`Load YAML: ${errMsg(e)}`);
     }
   };
 
@@ -84,13 +97,16 @@ export default function AppDetail() {
       setYamlMsg("Applied.");
       loadStatus();
     } catch (e) {
-      setError(`Apply YAML: ${e}`);
+      setError(`Apply YAML: ${errMsg(e)}`);
     } finally {
       setYamlBusy(false);
     }
   };
 
-  if (!app) return <ErrorBox error={error} />;
+  if (!app) {
+    if (loading) return <div className="empty">Loading…</div>;
+    return <ErrorBox error={error ?? "App not found."} />;
+  }
 
   return (
     <>
@@ -117,6 +133,7 @@ export default function AppDetail() {
         {statuses.length === 0 ? (
           <div className="faint">No status yet.</div>
         ) : (
+          <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -134,7 +151,7 @@ export default function AppDetail() {
                     <span className="faint"> · {s.target.container}</span>
                   </td>
                   <td>
-                    <span className="tag">{tagOf(s.current_image)}</span>{" "}
+                    <span className="tag" title={s.current_image}>{tagOf(s.current_image)}</span>{" "}
                     {s.error && <span className="badge failed">error</span>}
                   </td>
                   <td className="mono">
@@ -155,6 +172,7 @@ export default function AppDetail() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -278,6 +296,7 @@ export default function AppDetail() {
         {events.length === 0 ? (
           <div className="empty">No deploys yet.</div>
         ) : (
+          <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -302,8 +321,11 @@ export default function AppDetail() {
                       <span className="muted">cloudflare purge</span>
                     ) : (
                       <span className="mono" style={{ fontSize: 12 }}>
-                        {e.old_image ? tagOf(e.old_image) : "—"}{" "}
-                        <span className="faint">→</span> {tagOf(e.new_image)}
+                        <span className="trunc" title={e.old_image}>
+                          {e.old_image ? tagOf(e.old_image) : "—"}
+                        </span>{" "}
+                        <span className="faint">→</span>{" "}
+                        <span className="trunc" title={e.new_image}>{tagOf(e.new_image)}</span>
                       </span>
                     )}
                     {e.cf_purged && <span className="tag" style={{ marginLeft: 6 }}>cf purged</span>}
@@ -331,6 +353,7 @@ export default function AppDetail() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>

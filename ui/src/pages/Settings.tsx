@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, webhookBase, type RegistryCred, type Settings as SettingsT } from "../api";
-import { CopyField, ErrorBox } from "../components";
+import { CopyField, errMsg, ErrorBox } from "../components";
 import { useAuth } from "../auth";
 
 function AccountCard() {
@@ -30,7 +30,7 @@ function AccountCard() {
       setTimeout(() => setSaved(false), 1500);
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
     }
   };
 
@@ -92,7 +92,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
 
   const load = () => {
-    api.getSettings().then(setSettings).catch((e) => setError(String(e)));
+    api.getSettings().then(setSettings).catch((e) => setError(errMsg(e)));
     api.listRegistries().then(setCreds).catch(() => {});
   };
   useEffect(load, []);
@@ -105,7 +105,7 @@ export default function Settings() {
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
-      setError(String(e));
+      setError(errMsg(e));
     }
   };
 
@@ -116,13 +116,18 @@ export default function Settings() {
       setNewCred({ registry: "", username: "", password: "" });
       load();
     } catch (e) {
-      setError(String(e));
+      setError(errMsg(e));
     }
   };
 
   const delCred = async (registry: string) => {
-    await api.deleteRegistry(registry);
-    load();
+    if (!confirm(`Remove the stored credential for "${registry}"?`)) return;
+    try {
+      await api.deleteRegistry(registry);
+      load();
+    } catch (e) {
+      setError(`Remove credential: ${errMsg(e)}`);
+    }
   };
 
   return (
@@ -200,7 +205,8 @@ export default function Settings() {
           Hub rate limits. Public repos need no credentials.
         </div>
         {creds.length > 0 && (
-          <table style={{ marginBottom: 14 }}>
+          <div className="table-wrap" style={{ marginBottom: 14 }}>
+          <table>
             <thead>
               <tr>
                 <th>Registry</th>
@@ -224,6 +230,7 @@ export default function Settings() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
         <div className="row-4" style={{ gridTemplateColumns: "1.2fr 1fr 1fr auto" }}>
           <input

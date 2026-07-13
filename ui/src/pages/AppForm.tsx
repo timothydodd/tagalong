@@ -242,6 +242,7 @@ export default function AppForm() {
               onChange={(e) => set({ tag_strategy: e.target.value as TagStrategy })}
             >
               <option value="exact">exact — deploy tags matching a pattern</option>
+              <option value="regex">regex — deploy tags matching a regex</option>
               <option value="semver">semver — deploy newer versions</option>
               <option value="latest">latest — restart on rolling-tag change</option>
             </select>
@@ -361,6 +362,8 @@ export default function AppForm() {
               className="btn sm danger"
               onClick={() => removeTarget(i)}
               disabled={(app.targets?.length ?? 0) <= 1}
+              aria-label={`Remove target ${t.namespace}/${t.name || i + 1}`}
+              title="Remove target"
             >
               ✕
             </button>

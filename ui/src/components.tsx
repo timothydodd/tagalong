@@ -40,18 +40,44 @@ export function repoOf(image?: string): string {
   return colon >= 0 ? base.slice(0, colon) : base;
 }
 
+// errMsg extracts a readable message from a caught value, so every page shows
+// the same clean error text instead of a mix of "Error: …" prefixes.
+export function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function CopyField({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        // The clipboard API needs a secure context; fall back for plain-HTTP
+        // LAN access.
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* leave the button reading "Copy" so the failure is visible */
+    }
+  };
   return (
     <div className="copy-field">
       <span>{value}</span>
       <button
         className="btn sm"
-        onClick={() => {
-          navigator.clipboard.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-        }}
+        onClick={copy}
+        aria-label={copied ? "Copied" : "Copy to clipboard"}
+        aria-live="polite"
       >
         {copied ? "✓" : "Copy"}
       </button>
