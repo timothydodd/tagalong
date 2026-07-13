@@ -25,6 +25,7 @@ const minInterval = 60 * time.Second
 // Store is the persistence surface the poller needs.
 type Store interface {
 	ListApps() ([]model.App, error)
+	SetLastSeen(id int64, tag, digest string) error
 }
 
 // Engine accepts deploy jobs.
@@ -136,10 +137,9 @@ func (p *Poller) pollLatest(app model.App) {
 	// restart on the very first poll).
 	if app.LastSeenDigest == "" {
 		p.log.Info("poll latest seed", "app", app.Name, "digest", short(digest))
-		p.engine.Enqueue(deploy.Job{
-			App: app, Trigger: model.TriggerPoll, Action: model.ActionRestart,
-			Tag: track, Digest: digest,
-		})
+		if err := p.store.SetLastSeen(app.ID, track, digest); err != nil {
+			p.log.Warn("poll latest seed save", "app", app.Name, "err", err)
+		}
 		return
 	}
 	p.log.Info("poll latest change", "app", app.Name, "old", short(app.LastSeenDigest), "new", short(digest))

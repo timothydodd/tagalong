@@ -59,7 +59,13 @@ func (s *Server) hookGitHub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	secret, _ := s.store.GetSetting(model.KeyGitHubWebhookSecret)
-	if !webhook.ValidateGitHubSignature(secret, body, r.Header.Get("X-Hub-Signature-256")) {
+	if secret == "" {
+		// Unsigned hooks still work for trusted-LAN setups, but anyone who can
+		// reach this endpoint can trigger deploys with a forged payload — make
+		// sure that trade-off is impossible to miss in the logs.
+		s.log.Warn("SECURITY: github webhook accepted WITHOUT signature verification — set a GitHub webhook secret in Settings",
+			"remote", r.RemoteAddr)
+	} else if !webhook.ValidateGitHubSignature(secret, body, r.Header.Get("X-Hub-Signature-256")) {
 		writeErr(w, http.StatusUnauthorized, "invalid signature")
 		return
 	}

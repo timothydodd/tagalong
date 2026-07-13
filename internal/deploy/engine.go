@@ -5,6 +5,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -55,36 +56,52 @@ type Engine struct {
 	purger Purger
 	log    *slog.Logger
 
-	mu    sync.Mutex
+	// baseCtx is the lifetime context for queued deploys; cancelled only as a
+	// last resort when Shutdown's drain deadline passes.
+	baseCtx    context.Context
+	cancelBase context.CancelFunc
+
+	mu     sync.Mutex
 	queues map[int64]chan Job
-	wg    sync.WaitGroup
+	locks  map[int64]*sync.Mutex
+	closed bool
+	wg     sync.WaitGroup
 }
 
 // NewEngine constructs an Engine. purger may be nil.
 func NewEngine(k8s *K8s, store Store, bus *events.Bus, purger Purger, log *slog.Logger) *Engine {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
-		k8s:    k8s,
-		store:  store,
-		bus:    bus,
-		purger: purger,
-		log:    log,
-		queues: make(map[int64]chan Job),
+		k8s:        k8s,
+		store:      store,
+		bus:        bus,
+		purger:     purger,
+		log:        log,
+		baseCtx:    ctx,
+		cancelBase: cancel,
+		queues:     make(map[int64]chan Job),
+		locks:      make(map[int64]*sync.Mutex),
 	}
 }
 
-// Enqueue queues a job for asynchronous execution, serialized per app. Duplicate
-// jobs (same app already queued for the same image) are dropped.
+// Enqueue queues a job for asynchronous execution, serialized per app. Jobs are
+// dropped when the app's queue is full or the engine is shutting down.
 func (e *Engine) Enqueue(job Job) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		e.log.Warn("engine shutting down, dropping job", "app", job.App.Name, "image", job.NewImage)
+		return
+	}
 	q, ok := e.queues[job.App.ID]
 	if !ok {
 		q = make(chan Job, 8)
 		e.queues[job.App.ID] = q
 		e.wg.Add(1)
-		go e.worker(job.App.ID, q)
+		go e.worker(q)
 	}
-	e.mu.Unlock()
-
+	// Sending under e.mu keeps the send ordered against ForgetApp/Shutdown
+	// closing the channel; the select never blocks (buffered + default).
 	select {
 	case q <- job:
 	default:
@@ -93,9 +110,63 @@ func (e *Engine) Enqueue(job Job) {
 }
 
 // DeploySync executes a job synchronously and returns the terminal event. Used
-// by the manual-deploy API so the caller gets an immediate result.
+// by the manual-deploy API so the caller gets an immediate result. It takes the
+// same per-app lock as queued jobs, so a manual deploy can never run
+// concurrently with a webhook/poll deploy for the same app.
 func (e *Engine) DeploySync(ctx context.Context, job Job) model.DeployEvent {
 	return e.run(ctx, job)
+}
+
+// lockApp acquires the per-app deploy lock, returning the unlock func.
+func (e *Engine) lockApp(id int64) func() {
+	e.mu.Lock()
+	l, ok := e.locks[id]
+	if !ok {
+		l = &sync.Mutex{}
+		e.locks[id] = l
+	}
+	e.mu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
+// ForgetApp drops the queue, worker, and lock for a deleted app. Any queued
+// jobs still in the channel are drained by the exiting worker.
+func (e *Engine) ForgetApp(id int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if q, ok := e.queues[id]; ok {
+		close(q)
+		delete(e.queues, id)
+	}
+	delete(e.locks, id)
+}
+
+// Shutdown stops accepting jobs and waits for in-flight deploys to drain until
+// ctx expires, at which point it cancels them. A deploy interrupted this way is
+// left in rolling for the next boot's ReconcileStartup to resolve against the
+// live cluster.
+func (e *Engine) Shutdown(ctx context.Context) {
+	e.mu.Lock()
+	e.closed = true
+	for id, q := range e.queues {
+		close(q)
+		delete(e.queues, id)
+	}
+	e.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		e.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		e.log.Warn("shutdown deadline reached, interrupting in-flight deploys")
+		e.cancelBase()
+		<-done
+	}
 }
 
 // ReconcileStartup resolves deploy events left in-flight by a previous process.
@@ -162,14 +233,17 @@ func (e *Engine) reconcileEvent(ctx context.Context, ev model.DeployEvent) (stat
 	return model.StatusUnknown, interrupted
 }
 
-func (e *Engine) worker(appID int64, q chan Job) {
+func (e *Engine) worker(q chan Job) {
 	defer e.wg.Done()
 	for job := range q {
-		e.run(context.Background(), job)
+		e.run(e.baseCtx, job)
 	}
 }
 
 func (e *Engine) run(ctx context.Context, job Job) model.DeployEvent {
+	unlock := e.lockApp(job.App.ID)
+	defer unlock()
+
 	app := job.App
 	action := job.Action
 	if action == "" {
@@ -227,6 +301,14 @@ func (e *Engine) run(ctx context.Context, job Job) model.DeployEvent {
 		werr := e.k8s.WaitForRollout(wctx, t, rolloutTimeout)
 		cancel()
 		if werr != nil {
+			// A shutdown-cancelled watch says nothing about the rollout itself:
+			// leave the event in rolling so the next boot's ReconcileStartup can
+			// confirm it against the live cluster instead of guessing failed.
+			if errors.Is(werr, context.Canceled) && e.baseCtx.Err() != nil {
+				e.log.Warn("deploy interrupted by shutdown; will reconcile on next start",
+					"app", app.Name, "target", t.Namespace+"/"+t.Name)
+				return ev
+			}
 			return e.finish(ev, model.StatusFailed, fmt.Sprintf("%s/%s: %v", t.Namespace, t.Name, werr))
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
@@ -39,10 +40,18 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(": connected\n\n"))
 	flusher.Flush()
 
+	// Periodic keepalive comments stop idle-connection culling by proxies and
+	// let the client detect a dead stream.
+	keepalive := time.NewTicker(25 * time.Second)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-keepalive.C:
+			w.Write([]byte(": ping\n\n"))
+			flusher.Flush()
 		case ev, ok := <-ch:
 			if !ok {
 				return

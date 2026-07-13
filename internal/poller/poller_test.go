@@ -38,6 +38,17 @@ type fakeEngine struct{ jobs []deploy.Job }
 
 func (e *fakeEngine) Enqueue(j deploy.Job) { e.jobs = append(e.jobs, j) }
 
+// fakeStore captures last-seen writes.
+type fakeStore struct {
+	seenTag, seenDigest string
+}
+
+func (s *fakeStore) ListApps() ([]model.App, error) { return nil, nil }
+func (s *fakeStore) SetLastSeen(id int64, tag, digest string) error {
+	s.seenTag, s.seenDigest = tag, digest
+	return nil
+}
+
 // fakeK8s returns a fixed current image.
 type fakeK8s struct{ image string }
 
@@ -47,7 +58,28 @@ func (k *fakeK8s) CurrentImage(ctx context.Context, t model.Target) (string, err
 
 func newPoller(reg Registry, eng Engine, k8s K8s) *Poller {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return New(nil, eng, k8s, reg, log)
+	return New(&fakeStore{}, eng, k8s, reg, log)
+}
+
+func TestPollLatestFirstObservationSeedsWithoutDeploy(t *testing.T) {
+	app := model.App{
+		ID: 1, ImageRepo: "x/y", TagStrategy: model.StrategyLatest, Enabled: true,
+		LastSeenDigest: "", // never observed
+	}
+	reg := &fakeRegistry{digest: "sha256:first"}
+	eng := &fakeEngine{}
+	st := &fakeStore{}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	p := New(st, eng, &fakeK8s{}, reg, log)
+
+	p.pollApp(context.Background(), app)
+
+	if len(eng.jobs) != 0 {
+		t.Fatalf("first observation must not deploy, got %+v", eng.jobs)
+	}
+	if st.seenDigest != "sha256:first" {
+		t.Fatalf("expected digest seeded to store, got %q", st.seenDigest)
+	}
 }
 
 func TestPollLatestDigestChange(t *testing.T) {

@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/timothydodd/tagalong/internal/model"
 )
@@ -27,7 +29,6 @@ func (s *Store) CreateEvent(e model.DeployEvent) (model.DeployEvent, error) {
 func (s *Store) UpdateEvent(e model.DeployEvent) error {
 	terminal := e.Status == model.StatusSuccess || e.Status == model.StatusFailed ||
 		e.Status == model.StatusSkipped || e.Status == model.StatusUnknown
-	finished := "finished_at"
 	if terminal {
 		_, err := s.db.Exec(`UPDATE deploy_events SET action = ?, old_image = ?, new_image = ?,
 			status = ?, detail = ?, cf_purged = ?, finished_at = datetime('now') WHERE id = ?`,
@@ -35,7 +36,6 @@ func (s *Store) UpdateEvent(e model.DeployEvent) error {
 			nullStr(e.Detail), boolToInt(e.CFPurged), e.ID)
 		return err
 	}
-	_ = finished
 	_, err := s.db.Exec(`UPDATE deploy_events SET action = ?, old_image = ?, new_image = ?,
 		status = ?, detail = ?, cf_purged = ? WHERE id = ?`,
 		e.Action, nullStr(e.OldImage), nullStr(e.NewImage), e.Status,
@@ -114,6 +114,32 @@ func (s *Store) ListInterrupted() ([]model.DeployEvent, error) {
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// PruneEvents enforces history retention: terminal events older than maxAge are
+// deleted, and if more than keep terminal events remain, the oldest beyond that
+// count are deleted too. In-flight (pending/rolling) events are never touched.
+// Returns the number of rows deleted.
+func (s *Store) PruneEvents(maxAge time.Duration, keep int) (int64, error) {
+	inflight := `status NOT IN ('` + model.StatusPending + `', '` + model.StatusRolling + `')`
+	var total int64
+	res, err := s.db.Exec(`DELETE FROM deploy_events WHERE `+inflight+
+		` AND started_at < datetime('now', ?)`,
+		fmt.Sprintf("-%d seconds", int64(maxAge.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	total += n
+
+	res, err = s.db.Exec(`DELETE FROM deploy_events WHERE `+inflight+` AND id NOT IN (
+		SELECT id FROM deploy_events WHERE `+inflight+` ORDER BY id DESC LIMIT ?)`, keep)
+	if err != nil {
+		return total, err
+	}
+	n, _ = res.RowsAffected()
+	total += n
+	return total, nil
 }
 
 // SweepStale marks any events left in pending/rolling (e.g. from a crash) as

@@ -28,7 +28,7 @@ func (b *Bus) Subscribe() (<-chan model.DeployEvent, func()) {
 	defer b.mu.Unlock()
 	id := b.next
 	b.next++
-	ch := make(chan model.DeployEvent, 16)
+	ch := make(chan model.DeployEvent, 64)
 	b.subs[id] = ch
 	return ch, func() {
 		b.mu.Lock()

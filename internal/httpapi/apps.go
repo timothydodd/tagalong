@@ -78,6 +78,7 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 		writeAppErr(w, err)
 		return
 	}
+	s.engine.ForgetApp(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

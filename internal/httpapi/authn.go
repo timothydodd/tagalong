@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/timothydodd/tagalong/internal/auth"
@@ -21,7 +23,59 @@ const (
 	defaultUsername = "admin"
 	defaultPassword = "admin"
 	minPasswordLen  = 8
+
+	// Login throttle: attempts allowed per client IP per window. Also caps how
+	// much PBKDF2 work an unauthenticated caller can force.
+	loginWindow      = time.Minute
+	loginMaxAttempts = 10
 )
+
+// rateLimiter is a fixed-window per-key attempt counter.
+type rateLimiter struct {
+	mu       sync.Mutex
+	attempts map[string][]time.Time
+}
+
+func newRateLimiter() *rateLimiter {
+	return &rateLimiter{attempts: make(map[string][]time.Time)}
+}
+
+// allow records an attempt for key and reports whether it is within limits.
+func (l *rateLimiter) allow(key string) bool {
+	now := time.Now()
+	cutoff := now.Add(-loginWindow)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	kept := l.attempts[key][:0]
+	for _, t := range l.attempts[key] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= loginMaxAttempts {
+		l.attempts[key] = kept
+		return false
+	}
+	l.attempts[key] = append(kept, now)
+	// Opportunistically drop idle keys so the map can't grow unbounded.
+	if len(l.attempts) > 1000 {
+		for k, ts := range l.attempts {
+			if len(ts) == 0 || !ts[len(ts)-1].After(cutoff) {
+				delete(l.attempts, k)
+			}
+		}
+	}
+	return true
+}
+
+// clientIP returns the request's client address without the port. RealIP
+// middleware has already substituted proxy headers where present.
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
 
 // SeedAdmin creates the default admin/admin account the first time tagalong runs
 // against a fresh database. Subsequent boots are a no-op. The default password
@@ -67,6 +121,29 @@ func loadOrCreateSessionSecret(st *store.Store) ([]byte, error) {
 	return b, nil
 }
 
+// secret returns the current session-signing secret (rotated on password change).
+func (s *Server) secret() []byte {
+	s.secretMu.RLock()
+	defer s.secretMu.RUnlock()
+	return s.sessionSecret
+}
+
+// rotateSessionSecret replaces the persisted HMAC secret, immediately
+// invalidating every outstanding session token.
+func (s *Server) rotateSessionSecret() error {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return err
+	}
+	if err := s.store.SetSetting(model.KeyAuthSessionSecret, base64.RawStdEncoding.EncodeToString(b)); err != nil {
+		return err
+	}
+	s.secretMu.Lock()
+	s.sessionSecret = b
+	s.secretMu.Unlock()
+	return nil
+}
+
 // currentUser returns the authenticated username from the session cookie, if the
 // cookie is present, correctly signed, and unexpired.
 func (s *Server) currentUser(r *http.Request) (string, bool) {
@@ -74,7 +151,7 @@ func (s *Server) currentUser(r *http.Request) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return auth.VerifySession(s.sessionSecret, c.Value, time.Now().Unix())
+	return auth.VerifySession(s.secret(), c.Value, time.Now().Unix())
 }
 
 // requireAuth rejects unauthenticated requests with 401. The SPA treats a 401 on
@@ -93,7 +170,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, user string) {
 	exp := time.Now().Add(sessionTTL)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
-		Value:    auth.SignSession(s.sessionSecret, user, exp.Unix()),
+		Value:    auth.SignSession(s.secret(), user, exp.Unix()),
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -119,6 +196,10 @@ func (s *Server) meResponse(user string) map[string]any {
 
 // login validates credentials and issues a session cookie.
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if !s.loginLimit.allow(clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "too many login attempts; try again in a minute")
+		return
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -190,7 +271,12 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.SetSetting(model.KeyAuthPasswordIsDefault, "0")
-	// Re-issue the cookie so the current session stays valid.
+	// Rotate the signing secret so any previously issued (possibly stolen)
+	// tokens stop validating, then re-issue the current session under the new
+	// secret so this login stays valid.
+	if err := s.rotateSessionSecret(); err != nil {
+		s.log.Warn("rotate session secret after password change", "err", err)
+	}
 	s.setSessionCookie(w, user)
 	writeJSON(w, http.StatusOK, s.meResponse(user))
 }

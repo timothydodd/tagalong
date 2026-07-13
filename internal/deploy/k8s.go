@@ -42,6 +42,10 @@ func NewK8s(kubeconfig string) (*K8s, error) {
 	if err != nil {
 		return &K8s{}, fmt.Errorf("build kube config: %w", err)
 	}
+	// Bound every API request so a slow/unreachable API server can't hang
+	// callers indefinitely. Safe because rollout watching polls Get (no
+	// long-lived watch streams).
+	cfg.Timeout = 15 * time.Second
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return &K8s{}, err

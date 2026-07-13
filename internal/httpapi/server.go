@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -26,19 +27,23 @@ type TagLister interface {
 
 // Server holds handler dependencies.
 type Server struct {
-	store         *store.Store
-	engine        *deploy.Engine
-	k8s           *deploy.K8s
-	bus           *events.Bus
-	tags          TagLister
-	log           *slog.Logger
+	store      *store.Store
+	engine     *deploy.Engine
+	k8s        *deploy.K8s
+	bus        *events.Bus
+	tags       TagLister
+	log        *slog.Logger
+	loginLimit *rateLimiter
+
+	// sessionSecret is guarded by secretMu because changePassword rotates it.
+	secretMu      sync.RWMutex
 	sessionSecret []byte
 }
 
 // newServer builds the Server with its handler dependencies. Both NewServer and
 // NewHooksHandler share it so the two handlers behave identically per route.
 func newServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger) *Server {
-	s := &Server{store: st, engine: engine, k8s: k8s, bus: bus, tags: tags, log: log}
+	s := &Server{store: st, engine: engine, k8s: k8s, bus: bus, tags: tags, log: log, loginLimit: newRateLimiter()}
 	secret, err := loadOrCreateSessionSecret(st)
 	if err != nil {
 		// Fall back to an ephemeral secret so the process still serves; existing

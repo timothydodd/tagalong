@@ -65,10 +65,28 @@ func main() {
 	})
 	engine := deploy.NewEngine(k8s, st, bus, purger, log)
 
-	// Resolve events left in-flight by the previous process. A self-deploy kills
-	// the pod mid-rollout, so confirm those against the live cluster (marking them
+	// Resolve events left in-flight by the previous process, bounded so a slow
+	// API server can't stall startup indefinitely. A self-deploy kills the pod
+	// mid-rollout, so confirm those against the live cluster (marking them
 	// success where the rollout actually landed) instead of always "unknown".
-	engine.ReconcileStartup(context.Background())
+	recCtx, recCancel := context.WithTimeout(context.Background(), time.Minute)
+	engine.ReconcileStartup(recCtx)
+	recCancel()
+
+	// History retention: prune old deploy events at startup and daily after.
+	pruneEvents := func() {
+		if n, err := st.PruneEvents(90*24*time.Hour, 2000); err != nil {
+			log.Warn("prune deploy events", "err", err)
+		} else if n > 0 {
+			log.Info("pruned old deploy events", "count", n)
+		}
+	}
+	pruneEvents()
+	go func() {
+		for range time.Tick(24 * time.Hour) {
+			pruneEvents()
+		}
+	}()
 
 	handler := httpapi.NewServer(st, engine, k8s, bus, reg, log)
 
@@ -101,12 +119,16 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 	log.Info("shutting down")
+	pollCancel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
 	if hooksSrv != nil {
 		hooksSrv.Shutdown(ctx)
 	}
+	// Drain queued/in-flight deploys; past the deadline they're interrupted and
+	// left for the next boot's reconciliation.
+	engine.Shutdown(ctx)
 }
 
 // serve runs an HTTP server, exiting the process on any error other than a
