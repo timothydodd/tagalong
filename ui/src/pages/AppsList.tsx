@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type App } from "../api";
-import { downloadText, errMsg, ErrorBox, StatusBadge, tagOf } from "../components";
+import { downloadText, errMsg, ErrorBox, StatusBadge, tagOf, timeAgo } from "../components";
 import type { DeployEvent } from "../api";
 import { useEventStream } from "../useEvents";
 
@@ -23,7 +23,7 @@ export default function AppsList() {
       const events = await api.listEvents({ limit: 100 });
       const byApp: Record<number, DeployEvent> = {};
       for (const e of events) {
-        if (e.app_id && !byApp[e.app_id]) byApp[e.app_id] = e;
+        if (e.app_id && e.status !== "skipped" && !byApp[e.app_id]) byApp[e.app_id] = e;
       }
       setLastEvent(byApp);
     } catch (e) {
@@ -37,7 +37,8 @@ export default function AppsList() {
 
   // Live-update the last-event column as deploys happen.
   useEventStream((e) => {
-    if (e.app_id) setLastEvent((prev) => ({ ...prev, [e.app_id!]: e }));
+    if (e.app_id && e.status !== "skipped")
+      setLastEvent((prev) => ({ ...prev, [e.app_id!]: e }));
   });
 
   const deploy = async (app: App) => {
@@ -187,11 +188,20 @@ export default function AppsList() {
                     </td>
                     <td>
                       {ev ? (
-                        <div className="flex">
-                          <StatusBadge status={ev.status} />
-                          {ev.new_image && (
-                            <span className="tag" title={ev.new_image}>{tagOf(ev.new_image)}</span>
-                          )}
+                        <div>
+                          <div className="flex">
+                            <StatusBadge status={ev.status} />
+                            {ev.new_image && (
+                              <span className="tag" title={ev.new_image}>{tagOf(ev.new_image)}</span>
+                            )}
+                          </div>
+                          <div
+                            className="faint"
+                            style={{ fontSize: 11, marginTop: 2 }}
+                            title={new Date(ev.finished_at ?? ev.started_at).toLocaleString()}
+                          >
+                            {timeAgo(ev.finished_at ?? ev.started_at)}
+                          </div>
                         </div>
                       ) : (
                         <span className="faint">never</span>
