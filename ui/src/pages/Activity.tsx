@@ -4,13 +4,40 @@ import { api, type DeployEvent } from "../api";
 import { StatusBadge, timeAgo, tagOf } from "../components";
 import { useLiveEvents } from "../useEvents";
 
+const PAGE = 50;
+
 export default function Activity() {
   const [initial, setInitial] = useState<DeployEvent[]>([]);
-  const { events, connected } = useLiveEvents(initial);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Keep enough room for many pages plus live updates.
+  const { events, connected } = useLiveEvents(initial, 5000);
 
   useEffect(() => {
-    api.listEvents({ limit: 100 }).then(setInitial).catch(() => {});
+    api
+      .listEvents({ limit: PAGE })
+      .then((list) => {
+        setInitial(list);
+        setHasMore(list.length === PAGE);
+      })
+      .catch(() => {});
   }, []);
+
+  const loadMore = async () => {
+    const oldest = events[events.length - 1];
+    if (!oldest) return;
+    setLoadingMore(true);
+    try {
+      const older = await api.listEvents({ before_id: oldest.id, limit: PAGE });
+      // Append to initial so useLiveEvents merges & re-sorts them in.
+      setInitial((prev) => [...prev, ...older]);
+      setHasMore(older.length === PAGE);
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   return (
     <>
@@ -81,6 +108,13 @@ export default function Activity() {
               ))}
             </tbody>
           </table>
+          </div>
+        )}
+        {hasMore && (
+          <div className="flex" style={{ justifyContent: "center", padding: 12 }}>
+            <button className="btn" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
           </div>
         )}
       </div>

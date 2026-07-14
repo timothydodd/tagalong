@@ -116,30 +116,27 @@ func (s *Store) ListInterrupted() ([]model.DeployEvent, error) {
 	return events, rows.Err()
 }
 
-// PruneEvents enforces history retention: terminal events older than maxAge are
-// deleted, and if more than keep terminal events remain, the oldest beyond that
-// count are deleted too. In-flight (pending/rolling) events are never touched.
-// Returns the number of rows deleted.
+// PruneEvents enforces per-app history retention: for each app the newest keep
+// terminal events are always retained, and any beyond that count are deleted
+// only once they are older than maxAge. So an app with <= keep events is never
+// pruned, and recent events are kept even past keep. Events with no app_id form
+// their own retention group. In-flight (pending/rolling) events are never
+// touched. Returns the number of rows deleted.
 func (s *Store) PruneEvents(maxAge time.Duration, keep int) (int64, error) {
 	inflight := `status NOT IN ('` + model.StatusPending + `', '` + model.StatusRolling + `')`
-	var total int64
-	res, err := s.db.Exec(`DELETE FROM deploy_events WHERE `+inflight+
-		` AND started_at < datetime('now', ?)`,
-		fmt.Sprintf("-%d seconds", int64(maxAge.Seconds())))
+	res, err := s.db.Exec(`DELETE FROM deploy_events WHERE id IN (
+		SELECT id FROM (
+			SELECT id, started_at,
+				ROW_NUMBER() OVER (PARTITION BY app_id ORDER BY id DESC) AS rn
+			FROM deploy_events WHERE `+inflight+`
+		)
+		WHERE rn > ? AND started_at < datetime('now', ?)
+	)`, keep, fmt.Sprintf("-%d seconds", int64(maxAge.Seconds())))
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	total += n
-
-	res, err = s.db.Exec(`DELETE FROM deploy_events WHERE `+inflight+` AND id NOT IN (
-		SELECT id FROM deploy_events WHERE `+inflight+` ORDER BY id DESC LIMIT ?)`, keep)
-	if err != nil {
-		return total, err
-	}
-	n, _ = res.RowsAffected()
-	total += n
-	return total, nil
+	return n, nil
 }
 
 // SweepStale marks any events left in pending/rolling (e.g. from a crash) as

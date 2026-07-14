@@ -9,7 +9,7 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="dot" /> tagalong
+          <img src="/icon-192.png" alt="tagalong" className="brand-logo" />
         </div>
         <nav className="nav">
           <NavLink to="/" end>

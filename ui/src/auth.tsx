@@ -95,7 +95,7 @@ function Login({ onSuccess }: { onSuccess: () => Promise<void> }) {
     <div className="auth-screen">
       <form className="auth-card card" onSubmit={submit}>
         <div className="brand">
-          <span className="dot" /> tagalong
+          <img src="/icon-192.png" alt="tagalong" className="brand-logo" />
         </div>
         <div className="form-row">
           <label>Username</label>

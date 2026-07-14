@@ -73,7 +73,7 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
   align-items: center;
   gap: 8px;
 }
-.brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.brand-logo { height: 34px; width: auto; display: block; border-radius: 8px; }
 .nav a {
   display: block;
   padding: 8px 10px;
@@ -253,6 +253,7 @@ textarea { font-family: var(--mono); font-size: 12.5px; resize: vertical; min-he
   margin-bottom: 0;
 }
 .auth-card .brand { justify-content: center; padding-top: 4px; }
+.auth-card .brand-logo { height: 56px; border-radius: 12px; }
 .auth-card .btn { width: 100%; margin-top: 4px; }
 .hint { color: var(--text-faint); font-size: 12px; }
 

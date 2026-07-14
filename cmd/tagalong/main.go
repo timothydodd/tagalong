@@ -75,7 +75,9 @@ func main() {
 
 	// History retention: prune old deploy events at startup and daily after.
 	pruneEvents := func() {
-		if n, err := st.PruneEvents(90*24*time.Hour, 2000); err != nil {
+		// Per app: always keep the 30 newest events; delete anything beyond
+		// that only once it is older than ~2 months.
+		if n, err := st.PruneEvents(60*24*time.Hour, 30); err != nil {
 			log.Warn("prune deploy events", "err", err)
 		} else if n > 0 {
 			log.Info("pruned old deploy events", "count", n)
