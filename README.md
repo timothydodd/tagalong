@@ -101,12 +101,18 @@ The JSON API under `/api` is fully usable without the UI (see below).
 ## Build & publish (CI)
 
 `.github/workflows/docker-publish.yml` builds a multi-arch (amd64/arm64) image
-and pushes it to Docker Hub. Add two repo secrets — `DOCKERHUB_USERNAME` and
-`DOCKERHUB_TOKEN` (a Docker Hub access token) — then:
+and pushes it to the GitHub Container Registry as
+[`ghcr.io/timothydodd/tagalong`](https://github.com/timothydodd/tagalong/pkgs/container/tagalong).
+It authenticates with the workflow's built-in `GITHUB_TOKEN`, so no secrets are
+needed:
 
-- push to `main` → publishes `timdoddcool/tagalong:latest` (+ `:main-<sha>`)
+- push to `main` → publishes `ghcr.io/timothydodd/tagalong:latest` (+ `:main-<sha>`)
 - push a `vX.Y.Z` tag → publishes `:X.Y.Z`, `:X.Y`, and `:latest`
 - pull requests build only (no push), to catch breakage early
+
+Releases are cut by tagging: `git tag v0.1.0 && git push origin v0.1.0` (or
+create a GitHub release with a new `vX.Y.Z` tag), which publishes `:0.1.0`,
+`:0.1`, and `:latest`.
 
 ## Import / export apps as YAML
 
@@ -156,8 +162,8 @@ Only the single admin login exists — there are no roles or multiple users.
 
 1. Build and push the image (from a machine with Docker, or let CI do it):
    ```bash
-   make docker IMAGE=timdoddcool/tagalong:latest
-   docker push timdoddcool/tagalong:latest
+   make docker IMAGE=ghcr.io/timothydodd/tagalong:latest
+   docker push ghcr.io/timothydodd/tagalong:latest
    ```
 2. Apply the manifests:
    ```bash

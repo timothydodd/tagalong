@@ -1,15 +1,14 @@
 name: Build and Publish
 
-# Builds the container image and pushes it to Docker Hub.
+# Builds the container image and pushes it to GitHub Container Registry
+# (ghcr.io/timothydodd/tagalong), shown as a package on the repo.
 #
 # Each architecture is built on its OWN native runner (amd64 on ubuntu-24.04,
 # arm64 on the free ubuntu-24.04-arm public-repo runner) — no QEMU emulation,
 # which is what made the old single-job build take ~1h and time out. A final
 # `merge` job stitches the per-arch images into one multi-arch manifest.
 #
-# Required repository secrets (Settings → Secrets and variables → Actions):
-#   DOCKERHUB_USERNAME  your Docker Hub username (e.g. timdoddcool)
-#   DOCKERHUB_TOKEN     a Docker Hub access token (Account Settings → Security)
+# No secrets needed: jobs push with the built-in GITHUB_TOKEN (packages: write).
 #
 # Tags produced by the merge job:
 #   - push to main          → :latest and :main-<shortsha>
@@ -29,7 +28,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE: timdoddcool/tagalong
+  # GHCR image names must be lowercase.
+  IMAGE: ghcr.io/timothydodd/tagalong
 
 jobs:
   build:
@@ -38,6 +38,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -64,12 +65,13 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
 
-      - name: Log in to Docker Hub
+      - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and push by digest)
         id: build
@@ -109,6 +111,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      packages: write
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
@@ -131,16 +134,21 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - name: Log in to Docker Hub
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest
         working-directory: ${{ runner.temp }}/digests
+        # The index-level source annotation links the multi-arch package to this
+        # repo on GitHub (per-arch labels alone don't link a manifest list).
         run: |
           docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --annotation "index:org.opencontainers.image.description=Self-hosted continuous deployment for k3s" \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
 

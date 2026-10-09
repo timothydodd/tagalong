@@ -27,7 +27,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: tagalong
-          image: timdoddcool/tagalong:latest
+          image: ghcr.io/timothydodd/tagalong:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
