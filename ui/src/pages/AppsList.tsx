@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type App } from "../api";
-import { downloadText, errMsg, ErrorBox, StatusBadge, tagOf, timeAgo } from "../components";
+import {
+  downloadText,
+  errMsg,
+  ErrorBox,
+  removeAppPrompt,
+  StatusBadge,
+  tagOf,
+  timeAgo,
+} from "../components";
 import type { DeployEvent } from "../api";
 import { useEventStream } from "../useEvents";
 
@@ -49,6 +57,20 @@ export default function AppsList() {
       await api.deploy(app.id); // no tag = rollout-restart
     } catch (e) {
       setError(`Deploy ${app.name}: ${errMsg(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (app: App) => {
+    if (!confirm(removeAppPrompt(app.name))) return;
+    setBusy(app.id);
+    setError(null);
+    try {
+      await api.deleteApp(app.id);
+      setApps((prev) => prev.filter((a) => a.id !== app.id));
+    } catch (e) {
+      setError(`Remove ${app.name}: ${errMsg(e)}`);
     } finally {
       setBusy(null);
     }
@@ -232,6 +254,13 @@ export default function AppsList() {
                           onClick={() => nav(`/apps/${app.id}/edit`)}
                         >
                           Edit
+                        </button>
+                        <button
+                          className="btn sm danger"
+                          disabled={busy === app.id}
+                          onClick={() => remove(app)}
+                        >
+                          Remove
                         </button>
                       </div>
                     </td>

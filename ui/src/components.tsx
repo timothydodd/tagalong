@@ -85,6 +85,16 @@ export function CopyField({ value }: { value: string }) {
   );
 }
 
+// removeAppPrompt is the shared confirmation for removing an app, so the list
+// and detail pages say the same thing about what is (and isn't) affected.
+export function removeAppPrompt(name: string): string {
+  return (
+    `Remove app "${name}"?\n\n` +
+    "tagalong stops watching it: its webhooks and polling stop working. " +
+    "The workloads in your cluster are not touched, and deploy history is kept."
+  );
+}
+
 export function ErrorBox({ error }: { error: string | null }) {
   if (!error) return null;
   return <div className="error-box">{error}</div>;
