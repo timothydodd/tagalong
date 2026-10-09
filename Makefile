@@ -1,5 +1,5 @@
 # tagalong — build & dev tasks
-IMAGE ?= timdoddcool/tagalong:latest
+IMAGE ?= ghcr.io/timothydodd/tagalong:latest
 
 .PHONY: ui build run dev dev-ui test vet docker clean
 
