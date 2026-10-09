@@ -20,6 +20,7 @@ import (
 	"github.com/timothydodd/tagalong/internal/model"
 	"github.com/timothydodd/tagalong/internal/poller"
 	"github.com/timothydodd/tagalong/internal/registry"
+	"github.com/timothydodd/tagalong/internal/relay"
 	"github.com/timothydodd/tagalong/internal/store"
 )
 
@@ -28,7 +29,7 @@ func main() {
 	slog.SetDefault(log)
 
 	cfg := config.Load()
-	log.Info("starting tagalong", "db", cfg.DBPath, "listen", cfg.Listen, "hooks_listen", cfg.HooksListen, "kubeconfig", cfg.Kubeconfig != "")
+	log.Info("starting tagalong", "db", cfg.DBPath, "listen", cfg.Listen, "hooks_listen", cfg.HooksListen, "kubeconfig", cfg.Kubeconfig != "", "hub_url", cfg.HubURL)
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -90,12 +91,33 @@ func main() {
 		}
 	}()
 
-	handler := httpapi.NewServer(st, engine, k8s, bus, reg, log)
+	// Every instance can act as a hub: every incoming webhook is also relayed
+	// to any agents registered in Settings → Agents (a no-op when there are none).
+	hub := relay.NewHub(st, log)
+	opts := []httpapi.Option{httpapi.WithHub(hub)}
 
 	// Background registry poller.
 	pollCtx, pollCancel := context.WithCancel(context.Background())
 	defer pollCancel()
 	go poller.New(st, engine, k8s, reg, log).Run(pollCtx)
+
+	// Agent mode: connect out to a hub and process the webhooks it relays. The
+	// env vars win (and lock the UI); otherwise use what was saved in Settings.
+	agent := relay.NewManager(pollCtx, httpapi.NewRelayHandler(st, engine, k8s, bus, reg, log), log)
+	opts = append(opts, httpapi.WithAgent(agent))
+	if cfg.HubURL != "" {
+		if cfg.AgentToken == "" {
+			log.Error("TAGALONG_HUB_URL is set but TAGALONG_AGENT_TOKEN is empty")
+			os.Exit(1)
+		}
+		agent.Lock()
+		agent.Apply(cfg.HubURL, cfg.AgentToken)
+	} else if hubURL, _ := st.GetSetting(model.KeyHubURL); hubURL != "" {
+		token, _ := st.GetSetting(model.KeyHubAgentToken)
+		agent.Apply(hubURL, token)
+	}
+
+	handler := httpapi.NewServer(st, engine, k8s, bus, reg, log, opts...)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
@@ -110,7 +132,7 @@ func main() {
 	if cfg.HooksListen != "" {
 		hooksSrv = &http.Server{
 			Addr:              cfg.HooksListen,
-			Handler:           httpapi.NewHooksHandler(st, engine, k8s, bus, reg, log),
+			Handler:           httpapi.NewHooksHandler(st, engine, k8s, bus, reg, log, opts...),
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go serve(hooksSrv, "hooks", log)

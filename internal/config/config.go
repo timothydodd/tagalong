@@ -17,6 +17,12 @@ type Config struct {
 	HooksListen string
 	// Kubeconfig, when set, is used instead of in-cluster config (for local dev).
 	Kubeconfig string
+	// HubURL, when set, runs this instance as an agent: it connects out to the
+	// hub at this origin and processes the webhooks the hub relays to it.
+	HubURL string
+	// AgentToken authenticates this agent to the hub (from the hub's
+	// Settings → Agents). Required when HubURL is set.
+	AgentToken string
 }
 
 // Load reads configuration from the environment, applying defaults.
@@ -26,6 +32,8 @@ func Load() Config {
 		Listen:      env("TAGALONG_LISTEN", ":8080"),
 		HooksListen: os.Getenv("TAGALONG_HOOKS_LISTEN"),
 		Kubeconfig:  os.Getenv("TAGALONG_KUBECONFIG"),
+		HubURL:      os.Getenv("TAGALONG_HUB_URL"),
+		AgentToken:  os.Getenv("TAGALONG_AGENT_TOKEN"),
 	}
 }
 

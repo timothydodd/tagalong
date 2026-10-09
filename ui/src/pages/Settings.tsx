@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, webhookBase, type RegistryCred, type Settings as SettingsT } from "../api";
 import { CopyField, errMsg, ErrorBox } from "../components";
 import { useAuth } from "../auth";
+import { AgentsCard, HubCard } from "./SettingsAgents";
 
 function AccountCard() {
   const { user, refresh } = useAuth();
@@ -256,6 +257,9 @@ export default function Settings() {
           </button>
         </div>
       </div>
+
+      <HubCard />
+      <AgentsCard publicBaseURL={settings.public_base_url} />
     </>
   );
 }

@@ -142,6 +142,33 @@ type RegistryCred struct {
 	Password string `json:"password"`
 }
 
+// Agent is a downstream tagalong instance registered with this one (the hub).
+// Agents connect out to the hub and receive every webhook the hub gets. Connected/LastSeen/Queued are live, in-memory state.
+type Agent struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	Connected bool       `json:"connected"`
+	LastSeen  *time.Time `json:"last_seen,omitempty"`
+	Queued    int        `json:"queued"`
+}
+
+// HubStatus describes this instance's connection to a hub when it runs as an
+// agent (TAGALONG_HUB_URL set).
+type HubStatus struct {
+	Enabled     bool       `json:"enabled"`
+	URL         string     `json:"url,omitempty"`
+	Connected   bool       `json:"connected"`
+	LastContact *time.Time `json:"last_contact,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
+	Relayed     int64      `json:"relayed"`
+	// Locked means the connection is set by TAGALONG_HUB_URL/TAGALONG_AGENT_TOKEN
+	// and can't be changed from the UI.
+	Locked bool `json:"locked"`
+	// Token is the agent token, masked when set (never returned in clear).
+	Token string `json:"token,omitempty"`
+}
+
 // Settings are the global key/value settings surfaced to the UI.
 type Settings struct {
 	CloudflareAPIToken  string `json:"cloudflare_api_token"`
@@ -156,6 +183,11 @@ const (
 	KeyCloudflareAPIToken  = "cloudflare_api_token"
 	KeyGitHubWebhookSecret = "github_webhook_secret"
 	KeyPublicBaseURL       = "public_base_url"
+
+	// Agent-mode hub connection set from the UI (env vars take precedence).
+	// Internal — served by /api/hub, never via /api/settings.
+	KeyHubURL        = "hub_url"
+	KeyHubAgentToken = "hub_agent_token"
 
 	// Portal auth. These are internal — never surfaced via /api/settings.
 	KeyAuthUsername          = "auth_username"

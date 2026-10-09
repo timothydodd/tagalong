@@ -109,6 +109,31 @@ export interface RegistryCred {
   password: string;
 }
 
+// Agent is a downstream tagalong registered with this instance (the hub). It
+// receives every webhook this instance gets.
+export interface Agent {
+  id: number;
+  name: string;
+  created_at: string;
+  connected: boolean;
+  last_seen?: string;
+  queued: number;
+}
+
+// HubStatus is this instance's own connection to a hub (agent mode).
+export interface HubStatus {
+  enabled: boolean;
+  url?: string;
+  connected: boolean;
+  last_contact?: string;
+  last_error?: string;
+  relayed: number;
+  // Set by TAGALONG_HUB_URL / TAGALONG_AGENT_TOKEN — read-only in the UI.
+  locked: boolean;
+  // Masked as "********" when set.
+  token?: string;
+}
+
 export interface Me {
   username: string;
   must_change_password: boolean;
@@ -216,4 +241,11 @@ export const api = {
   putRegistry: (c: RegistryCred) => req<void>("PUT", "/api/settings/registries", c),
   deleteRegistry: (registry: string) =>
     req<void>("DELETE", `/api/settings/registries/${encodeURIComponent(registry)}`),
+  listAgents: () => req<Agent[]>("GET", "/api/agents").then((a) => a ?? []),
+  // The token is returned only here, once.
+  createAgent: (name: string) => req<Agent & { token: string }>("POST", "/api/agents", { name }),
+  deleteAgent: (id: number) => req<void>("DELETE", `/api/agents/${id}`),
+  hubStatus: () => req<HubStatus>("GET", "/api/hub"),
+  // Empty url disconnects. Echo "********" back to keep the stored token.
+  putHub: (url: string, token: string) => req<HubStatus>("PUT", "/api/hub", { url, token }),
 };
