@@ -37,7 +37,7 @@ type Server struct {
 	log        *slog.Logger
 	loginLimit *rateLimiter
 
-	// hub relays webhooks this instance has no app for to registered agents;
+	// hub relays every webhook this instance receives to registered agents;
 	// nil disables relaying. hubStatus reports this instance's own connection
 	// to a hub when it runs as an agent; nil when it doesn't.
 	hub       *relay.Hub

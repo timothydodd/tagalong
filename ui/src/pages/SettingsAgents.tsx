@@ -30,8 +30,8 @@ export function HubCard() {
     <div className="card">
       <div className="section-title">Hub connection</div>
       <div className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
-        This instance runs as an agent: it connects out to the hub below and handles the
-        webhooks the hub has no app for. Set by <code>TAGALONG_HUB_URL</code> /{" "}
+        This instance runs as an agent: it connects out to the hub below and handles every
+        webhook the hub receives, using this instance&rsquo;s own apps. Set by <code>TAGALONG_HUB_URL</code> /{" "}
         <code>TAGALONG_AGENT_TOKEN</code>.
       </div>
       <div className="table-wrap">
@@ -110,8 +110,8 @@ export function AgentsCard({ publicBaseURL }: { publicBaseURL: string }) {
       <div className="section-title">Agents</div>
       <div className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
         Other tagalong instances (e.g. on an internal network) that connect out to this one.
-        Webhooks this instance has <b>no app for</b> are passed to every agent, which deploys
-        them to its own cluster. Agents never need to be exposed.
+        <b>Every</b> webhook this instance receives is also passed to every agent, which
+        deploys it with its own apps to its own cluster. Agents never need to be exposed.
       </div>
       <ErrorBox error={error} />
 

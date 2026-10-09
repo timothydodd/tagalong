@@ -254,22 +254,30 @@ the internal network accepts inbound connections.
 
 ```
 Docker Hub / GitHub ──webhook──▶ HUB (public)
-                                  ├─ has an app for it?  → deploys to its own cluster (unchanged)
-                                  └─ no app for it        → relays to every agent
+                                  ├─ handles it with its own apps (if any) → its own cluster
+                                  └─ and relays EVERY webhook to every agent
                                                               ▲
                      AGENT (internal) ── outbound long-poll ──┘
-                     handles it exactly like a direct webhook, on its own cluster
+                     handles it like a direct webhook, with its own apps, on its own cluster
 ```
 
 - **Each instance keeps its own apps.** Configure internal apps on the agent's
   own portal; the hub needs no knowledge of them. Polling and Cloudflare purges
   run on whichever instance owns the app.
-- **Relay rule:** a webhook goes to agents only when the hub has **no app** for
-  it (unknown Docker Hub token, or a GitHub package with no matching
-  `image_repo`). If both the hub and an agent configure the same repo, only the
-  hub deploys it on GitHub pushes.
-- **Docker Hub:** register the hook against the *hub's* hostname using the
-  *agent* app's token: `https://<hub>/hooks/dockerhub/<agent-app-token>`.
+- **Relay rule:** every webhook goes to every agent, whether or not the hub
+  also has an app for it. An app configured on both the hub and an agent
+  deploys on both clusters from one webhook. Instances with no matching app
+  just ignore it.
+- **Docker Hub:** point the hook at the *hub's* hostname. Either token works:
+  - the **hub** app's token (`https://<hub>/hooks/dockerhub/<hub-app-token>`) —
+    the hub authenticates it, so agents match their own copy of the app by
+    image repo (their copy's token is different, and that's fine);
+  - an **agent-only** app's token — the hub doesn't know it, so it's relayed
+    as-is and only the agent whose app has that exact token acts on it.
+
+  An unknown token is never matched by repo, so a guessed token can't trigger
+  agent deploys. A known token with a payload for the wrong repo is rejected
+  at the hub (400) and not relayed.
 - **GitHub:** the hub's single org/repo webhook covers agents too. The hub
   verifies the signature with *its* secret; agents trust relayed payloads, so
   their own GitHub secret doesn't need to match.
@@ -287,8 +295,11 @@ The agent endpoints (`/agent/v1/poll`, `/agent/v1/results`) are served wherever
 the webhooks are — including the hooks-only listener — so a hub using
 `TAGALONG_HOOKS_LISTEN` keeps its portal private too.
 
-**Webhook responses from the hub** list each agent's outcome:
-`{"status":"relayed","agents":[{"agent":"office","state":"done","status":202,"response":{...}}]}`.
+**Webhook responses from the hub** include the hub's own outcome (`local`, when
+it has the app) and each agent's:
+`{"status":"relayed","local":{...},"agents":[{"agent":"office","state":"done","status":202,"response":{...}}]}`.
+The status is 202 if anything deployed (or may still), 404 only if no instance
+knew the webhook. With no agents registered, responses are exactly as before.
 `state` is `done` (agent answered), `pending` (connected but slower than ~8s) or
 `queued` (offline — delivered when it reconnects, if within 15 minutes; up to
 100 per agent). Delivery is at-most-once: if an agent crashes mid-webhook it is

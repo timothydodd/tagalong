@@ -38,42 +38,75 @@ const relayWait = 8 * time.Second
 
 // hookDockerHub handles POST /hooks/dockerhub/{token}. The token identifies the
 // app (and authenticates the caller). The payload's repo is cross-checked
-// against the app's configured image_repo.
+// against the app's configured image_repo. With agents registered, the hook is
+// also relayed to every agent.
 func (s *Server) hookDockerHub(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxHookBody))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "read body")
 		return
 	}
-	res := s.processDockerHub(chi.URLParam(r, "token"), body, false)
+	token := chi.URLParam(r, "token")
+
+	app, tag, fail := s.resolveDockerHub(token, body, false)
+	if !s.relaying() {
+		if fail != nil {
+			writeJSON(w, fail.status, fail.body)
+			return
+		}
+		res := s.handleTrigger(app, tag, model.TriggerDockerHub)
+		writeJSON(w, res.status, res.body)
+		return
+	}
+	// A token we know but a bad/mismatched payload is rejected outright rather
+	// than relayed; only an unknown token (404) still goes to the agents.
+	if fail != nil && fail.status != http.StatusNotFound {
+		writeJSON(w, fail.status, fail.body)
+		return
+	}
+
+	var local func() hookResult
+	if fail == nil {
+		local = func() hookResult { return s.handleTrigger(app, tag, model.TriggerDockerHub) }
+	}
+	// When we recognized the token the caller is authenticated, so agents may
+	// match their own copy of the app by repo (their token differs from ours).
+	res := s.fanOut(relay.Message{Kind: relay.KindDockerHub, Token: token, Body: body, Verified: fail == nil}, local)
 	writeJSON(w, res.status, res.body)
 }
 
-func (s *Server) processDockerHub(token string, body []byte, relayed bool) hookResult {
+// resolveDockerHub maps a Docker Hub hook to an app and pushed tag, or returns
+// the failure response. verified means the hub already authenticated the
+// token, so when it isn't one of ours the app is matched by payload repo.
+func (s *Server) resolveDockerHub(token string, body []byte, verified bool) (model.App, string, *hookResult) {
 	app, err := s.store.GetAppByToken(token)
-	if err != nil {
-		// Not ours — one of our agents may own the token.
-		if !relayed && s.hub != nil && s.hub.HasAgents() {
-			return s.relayDockerHub(token, body)
+	if err != nil && verified {
+		if repo, _, perr := webhook.ParseDockerHub(body); perr == nil {
+			app, err = s.store.GetAppByRepo(repo)
 		}
+	}
+	if err != nil {
 		// Unknown token: 404, don't leak which tokens are valid beyond status.
-		return hookErr(http.StatusNotFound, "unknown webhook token")
+		res := hookErr(http.StatusNotFound, "unknown webhook token")
+		return model.App{}, "", &res
 	}
 
 	repo, tag, err := webhook.ParseDockerHub(body)
 	if err != nil {
-		return hookErr(http.StatusBadRequest, err.Error())
+		res := hookErr(http.StatusBadRequest, err.Error())
+		return model.App{}, "", &res
 	}
 	if repo != app.ImageRepo {
 		s.log.Warn("dockerhub webhook repo mismatch", "app", app.Name, "token_repo", app.ImageRepo, "payload_repo", repo)
-		return hookErr(http.StatusBadRequest, "payload repo does not match app")
+		res := hookErr(http.StatusBadRequest, "payload repo does not match app")
+		return model.App{}, "", &res
 	}
-
-	return s.handleTrigger(app, tag, model.TriggerDockerHub)
+	return app, tag, nil
 }
 
 // hookGitHub handles POST /hooks/github. It validates the HMAC signature, then
 // maps the published container image to a configured app by normalized repo.
+// With agents registered, the hook is also relayed to every agent.
 func (s *Server) hookGitHub(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxHookBody))
 	if err != nil {
@@ -93,90 +126,129 @@ func (s *Server) hookGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := s.processGitHub(body, false)
-	writeJSON(w, res.status, res.body)
+	app, tag, res := s.resolveGitHub(body)
+	relaying := s.relaying()
+	if res != nil && (!relaying || res.status != http.StatusNotFound) {
+		if res.status == http.StatusNotFound {
+			res.status = http.StatusOK // "no app" is a no-op, not an error
+		}
+		writeJSON(w, res.status, res.body)
+		return
+	}
+	if !relaying {
+		res := s.handleTrigger(app, tag, model.TriggerGitHub)
+		writeJSON(w, res.status, res.body)
+		return
+	}
+
+	var local func() hookResult
+	if res == nil {
+		local = func() hookResult { return s.handleTrigger(app, tag, model.TriggerGitHub) }
+	}
+	out := s.fanOut(relay.Message{Kind: relay.KindGitHub, Body: body}, local)
+	writeJSON(w, out.status, out.body)
 }
 
-// processGitHub handles an already-authenticated GitHub payload: either one
-// whose signature this instance verified, or one relayed by the hub (which
-// verified it against its own secret).
-func (s *Server) processGitHub(body []byte, relayed bool) hookResult {
+// resolveGitHub maps an already-authenticated GitHub payload to an app and
+// tag, or returns the response to send. A 404 status marks "no app for this
+// repo" (sent to the caller as a 200 no-op, but still relayed to agents).
+func (s *Server) resolveGitHub(body []byte) (model.App, string, *hookResult) {
 	repo, tag, err := webhook.ParseGitHub(body)
 	if errors.Is(err, webhook.ErrNotContainerPublish) {
 		// Benign event we don't act on (ping, non-container, digest-only).
-		return hookResult{http.StatusOK, map[string]string{"status": "ignored"}}
+		res := hookResult{http.StatusOK, map[string]string{"status": "ignored"}}
+		return model.App{}, "", &res
 	}
 	if err != nil {
-		return hookErr(http.StatusBadRequest, err.Error())
+		res := hookErr(http.StatusBadRequest, err.Error())
+		return model.App{}, "", &res
 	}
 
 	app, err := s.store.GetAppByRepo(repo)
 	if errors.Is(err, store.ErrNotFound) {
-		// Not ours — pass it to our agents, if any.
-		if !relayed && s.hub != nil && s.hub.HasAgents() {
-			return s.relayGitHub(repo, body)
-		}
 		// Org-level webhook will send packages we don't track — no-op.
-		return hookResult{http.StatusOK, map[string]string{"status": "no app for " + repo}}
+		res := hookResult{http.StatusNotFound, map[string]string{"status": "no app for " + repo}}
+		return model.App{}, "", &res
 	}
 	if err != nil {
-		return hookErr(http.StatusInternalServerError, err.Error())
+		res := hookErr(http.StatusInternalServerError, err.Error())
+		return model.App{}, "", &res
 	}
-
-	return s.handleTrigger(app, tag, model.TriggerGitHub)
+	return app, tag, nil
 }
 
-// relayDockerHub forwards a Docker Hub hook with an unknown token to the
-// agents. At most one agent owns a token, so it's a 404 only when every agent
-// definitively said so.
-func (s *Server) relayDockerHub(token string, body []byte) hookResult {
+// relaying reports whether hooks should be relayed (this is a hub with agents).
+func (s *Server) relaying() bool {
+	return s.hub != nil && s.hub.HasAgents()
+}
+
+// fanOut relays a hook to every agent while handling it locally (local is nil
+// when this instance has no app for it), and combines the outcomes.
+func (s *Server) fanOut(m relay.Message, local func() hookResult) hookResult {
 	ctx, cancel := context.WithTimeout(context.Background(), relayWait)
 	defer cancel()
-	results := s.hub.Relay(ctx, relay.KindDockerHub, token, body)
+	agentsCh := make(chan []relay.AgentResult, 1)
+	go func() { agentsCh <- s.hub.Relay(ctx, m.Kind, m.Token, m.Body, m.Verified) }()
 
-	claimed := false
-	for _, r := range results {
-		if r.State != relay.StateDone || r.Status != http.StatusNotFound {
-			claimed = true
-		}
+	var lr *hookResult
+	if local != nil {
+		r := local()
+		lr = &r
 	}
-	if !claimed {
-		return hookErr(http.StatusNotFound, "unknown webhook token")
-	}
-	return relayResponse(results)
+	return relayResponse(lr, <-agentsCh)
 }
 
-// relayGitHub forwards a GitHub hook for a repo with no local app to the agents.
-func (s *Server) relayGitHub(repo string, body []byte) hookResult {
-	ctx, cancel := context.WithTimeout(context.Background(), relayWait)
-	defer cancel()
-	s.log.Info("relaying github webhook to agents", "repo", repo)
-	return relayResponse(s.hub.Relay(ctx, relay.KindGitHub, "", body))
-}
-
-// relayResponse summarizes the agents' outcomes for the webhook caller: 202 if
-// any agent accepted or may still act on it, otherwise 200.
-func relayResponse(results []relay.AgentResult) hookResult {
-	status := http.StatusOK
-	for _, r := range results {
-		if r.State != relay.StateDone || r.Status == http.StatusAccepted {
+// relayResponse combines the local outcome (nil if no local app) with the
+// agents'. 202 if anything accepted or may still act on the hook; 404 if
+// nothing here or on any agent knew it; otherwise the local status, or 200.
+func relayResponse(local *hookResult, agents []relay.AgentResult) hookResult {
+	body := map[string]any{"status": "relayed", "agents": agents}
+	status := http.StatusNotFound
+	if local != nil {
+		body["local"] = local.body
+		status = local.status
+	}
+	for _, r := range agents {
+		switch {
+		case r.State != relay.StateDone || r.Status == http.StatusAccepted:
 			status = http.StatusAccepted
+		case r.Status != http.StatusNotFound && status == http.StatusNotFound:
+			status = http.StatusOK
 		}
 	}
-	return hookResult{status, map[string]any{"status": "relayed", "agents": results}}
+	if local != nil && local.status == http.StatusAccepted {
+		status = http.StatusAccepted
+	}
+	if status == http.StatusNotFound {
+		body["error"] = "no app for this webhook here or on any agent"
+	}
+	return hookResult{status, body}
 }
 
 // HandleRelayed runs a webhook relayed from the hub through this instance's
-// receivers (agent mode) and returns the response they produced.
+// receivers (agent mode) and returns the response they produced. Relayed hooks
+// are never relayed further.
 func (s *Server) HandleRelayed(_ context.Context, m relay.Message) (int, []byte) {
-	var res hookResult
+	var res *hookResult
 	switch m.Kind {
 	case relay.KindDockerHub:
-		res = s.processDockerHub(m.Token, m.Body, true)
+		app, tag, fail := s.resolveDockerHub(m.Token, m.Body, m.Verified)
+		if res = fail; res == nil {
+			r := s.handleTrigger(app, tag, model.TriggerDockerHub)
+			res = &r
+		}
 	case relay.KindGitHub:
-		res = s.processGitHub(m.Body, true)
+		// The hub verified the signature against its own secret.
+		app, tag, fail := s.resolveGitHub(m.Body)
+		if res = fail; res == nil {
+			r := s.handleTrigger(app, tag, model.TriggerGitHub)
+			res = &r
+		} else if res.status == http.StatusNotFound {
+			res.status = http.StatusOK // "no app" is a no-op, as for a direct hook
+		}
 	default:
-		res = hookErr(http.StatusBadRequest, "unknown relay kind "+m.Kind)
+		r := hookErr(http.StatusBadRequest, "unknown relay kind "+m.Kind)
+		res = &r
 	}
 	b, _ := json.Marshal(res.body)
 	return res.status, b

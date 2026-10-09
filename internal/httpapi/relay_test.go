@@ -181,23 +181,88 @@ func TestRelayGitHubTrustsHubSignature(t *testing.T) {
 	waitImage(t, agent.cs, "thorngate", "thorngate", "thorngate", "ghcr.io/timothydodd/thorngate:0.6")
 }
 
-func TestRelayHubAppTakesPrecedence(t *testing.T) {
-	hubDep := readyDeploy("default", "homedash", "robo-dash", "timdoddcool/robo-dash:oldsha")
-	hub, hubURL, _ := hubAndAgent(t)
-	hub.cs.AppsV1().Deployments("default").Create(context.Background(), hubDep, metav1.CreateOptions{})
-	hub.st.CreateApp(model.App{
+// sameApp is one app configured on both the hub and the agent — each copy with
+// its own webhook token, as happens when created separately in each portal.
+func sameApp(token string) model.App {
+	return model.App{
 		Name: "robo-dash", ImageRepo: "docker.io/timdoddcool/robo-dash",
 		TagStrategy: model.StrategyExact, StrategyConf: model.StrategyConf{Pattern: "^[0-9a-f]{40}$"},
-		Enabled: true, WebhookToken: "hubtok",
+		Enabled: true, WebhookToken: token,
 		Targets: []model.Target{{Namespace: "default", Kind: model.KindDeployment, Name: "homedash", Container: "robo-dash"}},
-	})
+	}
+}
+
+func TestRelaySameAppDeploysOnHubAndAgent(t *testing.T) {
+	dep := func() *appsv1.Deployment {
+		return readyDeploy("default", "homedash", "robo-dash", "timdoddcool/robo-dash:oldsha")
+	}
+	hub, hubURL, agent := hubAndAgent(t, dep())
+	hub.cs.AppsV1().Deployments("default").Create(context.Background(), dep(), metav1.CreateOptions{})
+	hub.st.CreateApp(sameApp("hubtok"))
+	agent.st.CreateApp(sameApp("agenttok")) // different token from the hub's copy
+
+	// Docker Hub hook registered with the HUB's token deploys both clusters.
 	newTag := "4fc1300ae6f6b4ede2f1db308e24db1647c4c7f9"
 	body := `{"push_data":{"tag":"` + newTag + `"},"repository":{"repo_name":"timdoddcool/robo-dash"}}`
 	code, rb, raw := postHook(t, hubURL+"/hooks/dockerhub/hubtok", body, nil)
-	if code != http.StatusAccepted || rb.Status == "relayed" {
-		t.Fatalf("expected local deploy, got %d: %s", code, raw)
+	if code != http.StatusAccepted || rb.Status != "relayed" || len(rb.Agents) != 1 || rb.Agents[0].Status != http.StatusAccepted {
+		t.Fatalf("expected local + relayed deploy, got %d: %s", code, raw)
 	}
-	waitImage(t, hub.cs, "default", "homedash", "robo-dash", "docker.io/timdoddcool/robo-dash:"+newTag)
+	want := "docker.io/timdoddcool/robo-dash:" + newTag
+	waitImage(t, hub.cs, "default", "homedash", "robo-dash", want)
+	waitImage(t, agent.cs, "default", "homedash", "robo-dash", want)
+}
+
+func TestRelayGitHubDeploysOnHubAndAgent(t *testing.T) {
+	dep := func() *appsv1.Deployment {
+		return readyDeploy("thorngate", "thorngate", "thorngate", "ghcr.io/timothydodd/thorngate:0.5")
+	}
+	app := model.App{
+		Name: "thorngate", ImageRepo: "ghcr.io/timothydodd/thorngate",
+		TagStrategy: model.StrategySemver, Enabled: true,
+		Targets: []model.Target{{Namespace: "thorngate", Kind: model.KindDeployment, Name: "thorngate", Container: "thorngate"}},
+	}
+	hub, hubURL, agent := hubAndAgent(t, dep())
+	hub.cs.AppsV1().Deployments("thorngate").Create(context.Background(), dep(), metav1.CreateOptions{})
+	hub.st.CreateApp(app)
+	agent.st.CreateApp(app)
+
+	body := `{"action":"published","registry_package":{"name":"thorngate","namespace":"timothydodd","package_type":"container","package_version":{"package_url":"ghcr.io/timothydodd/thorngate:0.6","container_metadata":{"tag":{"name":"0.6"}}}}}`
+	code, rb, raw := postHook(t, hubURL+"/hooks/github", body, nil)
+	if code != http.StatusAccepted || len(rb.Agents) != 1 || rb.Agents[0].Status != http.StatusAccepted {
+		t.Fatalf("expected local + relayed deploy, got %d: %s", code, raw)
+	}
+	waitImage(t, hub.cs, "thorngate", "thorngate", "thorngate", "ghcr.io/timothydodd/thorngate:0.6")
+	waitImage(t, agent.cs, "thorngate", "thorngate", "thorngate", "ghcr.io/timothydodd/thorngate:0.6")
+}
+
+func TestRelayUnknownTokenCannotMatchAgentByRepo(t *testing.T) {
+	dep := readyDeploy("default", "homedash", "robo-dash", "timdoddcool/robo-dash:oldsha")
+	_, hubURL, agent := hubAndAgent(t, dep)
+	agent.st.CreateApp(sameApp("agenttok"))
+
+	// The hub doesn't know this token, so the caller is unauthenticated: the
+	// agent must not fall back to matching its app by the payload's repo.
+	body := `{"push_data":{"tag":"4fc1300ae6f6b4ede2f1db308e24db1647c4c7f9"},"repository":{"repo_name":"timdoddcool/robo-dash"}}`
+	code, _, raw := postHook(t, hubURL+"/hooks/dockerhub/guessed", body, nil)
+	if code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown token, got %d: %s", code, raw)
+	}
+	d, _ := agent.cs.AppsV1().Deployments("default").Get(context.Background(), "homedash", metav1.GetOptions{})
+	if img := d.Spec.Template.Spec.Containers[0].Image; img != "timdoddcool/robo-dash:oldsha" {
+		t.Fatalf("agent deployed on an unauthenticated hook: %s", img)
+	}
+}
+
+func TestRelayHubRejectsMismatchedPayload(t *testing.T) {
+	hub, hubURL, _ := hubAndAgent(t)
+	hub.st.CreateApp(sameApp("hubtok"))
+	// Known token, wrong repo: rejected at the hub and not relayed.
+	body := `{"push_data":{"tag":"x"},"repository":{"repo_name":"someone/else"}}`
+	code, rb, raw := postHook(t, hubURL+"/hooks/dockerhub/hubtok", body, nil)
+	if code != http.StatusBadRequest || rb.Status == "relayed" {
+		t.Fatalf("expected 400 without relay, got %d: %s", code, raw)
+	}
 }
 
 func TestRelayOfflineAgentQueues(t *testing.T) {

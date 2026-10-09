@@ -91,7 +91,7 @@ func main() {
 		}
 	}()
 
-	// Every instance can act as a hub: webhooks with no local app are relayed
+	// Every instance can act as a hub: every incoming webhook is also relayed
 	// to any agents registered in Settings → Agents (a no-op when there are none).
 	hub := relay.NewHub(st, log)
 	opts := []httpapi.Option{httpapi.WithHub(hub)}

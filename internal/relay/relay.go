@@ -2,9 +2,9 @@
 // instances (agents) that cannot accept inbound connections.
 //
 // Agents dial OUT to the hub and long-poll for work, so an agent on a private
-// network never needs to be exposed. When the hub receives a webhook it has no
-// app for, it queues the raw webhook for every registered agent; each agent
-// processes it exactly as if it had received it directly and posts the outcome
+// network never needs to be exposed. Every webhook the hub receives is handled
+// by the hub's own apps (if any) AND queued for every registered agent; each
+// agent processes it as if it had received it directly and posts the outcome
 // back. Agents keep their own apps, polling, and Cloudflare purges — the hub
 // only relays.
 //
@@ -50,6 +50,10 @@ type Message struct {
 	Kind string `json:"kind"`
 	// Token is the Docker Hub per-app token from the hook URL path.
 	Token string `json:"token,omitempty"`
+	// Verified means the hub recognized Token (so the caller is authenticated)
+	// and the agent may match its own app by payload repo instead — the same
+	// app on hub and agent has a different token on each.
+	Verified bool `json:"verified,omitempty"`
 	// Body is the raw webhook payload. For GitHub the hub has already verified
 	// the signature, so agents trust relayed GitHub payloads.
 	Body []byte `json:"body"`

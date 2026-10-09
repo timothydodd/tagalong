@@ -93,7 +93,7 @@ func (h *Hub) HasAgents() bool {
 // connected agent has answered or ctx ends. Agents that didn't answer are
 // reported as pending (connected) or queued (offline) — their copy is still
 // delivered.
-func (h *Hub) Relay(ctx context.Context, kind, token string, body []byte) []AgentResult {
+func (h *Hub) Relay(ctx context.Context, kind, token string, body []byte, verified bool) []AgentResult {
 	agents, err := h.store.ListAgents()
 	if err != nil {
 		h.log.Warn("relay: list agents", "err", err)
@@ -103,7 +103,7 @@ func (h *Hub) Relay(ctx context.Context, kind, token string, body []byte) []Agen
 		return nil
 	}
 
-	msg := Message{ID: newID(), Kind: kind, Token: token, Body: body}
+	msg := Message{ID: newID(), Kind: kind, Token: token, Body: body, Verified: verified}
 	ch := make(chan AgentResult, len(agents))
 	now := time.Now()
 

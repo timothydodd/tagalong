@@ -110,7 +110,7 @@ export interface RegistryCred {
 }
 
 // Agent is a downstream tagalong registered with this instance (the hub). It
-// receives the webhooks this instance has no app for.
+// receives every webhook this instance gets.
 export interface Agent {
   id: number;
   name: string;

@@ -143,8 +143,7 @@ type RegistryCred struct {
 }
 
 // Agent is a downstream tagalong instance registered with this one (the hub).
-// Agents connect out to the hub and receive the webhooks the hub has no app
-// for. Connected/LastSeen/Queued are live, in-memory state.
+// Agents connect out to the hub and receive every webhook the hub gets. Connected/LastSeen/Queued are live, in-memory state.
 type Agent struct {
 	ID        int64      `json:"id"`
 	Name      string     `json:"name"`
