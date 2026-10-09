@@ -44,6 +44,13 @@ spec:
             # Second listener serving only /hooks/* — point the public tunnel here.
             # - name: TAGALONG_HOOKS_LISTEN
             #   value: ":8081"
+            # Agent mode: connect out to a hub tagalong and handle the webhooks it
+            # relays. Create the agent (and its token) in the hub's Settings → Agents.
+            # - name: TAGALONG_HUB_URL
+            #   value: https://tagalong.example.com
+            # - name: TAGALONG_AGENT_TOKEN
+            #   valueFrom:
+            #     secretKeyRef: { name: tagalong-agent, key: token }
           volumeMounts:
             - name: data
               mountPath: /data

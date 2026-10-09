@@ -142,6 +142,29 @@ type RegistryCred struct {
 	Password string `json:"password"`
 }
 
+// Agent is a downstream tagalong instance registered with this one (the hub).
+// Agents connect out to the hub and receive the webhooks the hub has no app
+// for. Connected/LastSeen/Queued are live, in-memory state.
+type Agent struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	Connected bool       `json:"connected"`
+	LastSeen  *time.Time `json:"last_seen,omitempty"`
+	Queued    int        `json:"queued"`
+}
+
+// HubStatus describes this instance's connection to a hub when it runs as an
+// agent (TAGALONG_HUB_URL set).
+type HubStatus struct {
+	Enabled     bool       `json:"enabled"`
+	URL         string     `json:"url,omitempty"`
+	Connected   bool       `json:"connected"`
+	LastContact *time.Time `json:"last_contact,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
+	Relayed     int64      `json:"relayed"`
+}
+
 // Settings are the global key/value settings surfaced to the UI.
 type Settings struct {
 	CloudflareAPIToken  string `json:"cloudflare_api_token"`

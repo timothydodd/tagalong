@@ -15,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/timothydodd/tagalong/internal/deploy"
 	"github.com/timothydodd/tagalong/internal/events"
+	"github.com/timothydodd/tagalong/internal/model"
+	"github.com/timothydodd/tagalong/internal/relay"
 	"github.com/timothydodd/tagalong/internal/store"
 	"github.com/timothydodd/tagalong/ui"
 )
@@ -35,15 +37,34 @@ type Server struct {
 	log        *slog.Logger
 	loginLimit *rateLimiter
 
+	// hub relays webhooks this instance has no app for to registered agents;
+	// nil disables relaying. hubStatus reports this instance's own connection
+	// to a hub when it runs as an agent; nil when it doesn't.
+	hub       *relay.Hub
+	hubStatus func() model.HubStatus
+
 	// sessionSecret is guarded by secretMu because changePassword rotates it.
 	secretMu      sync.RWMutex
 	sessionSecret []byte
 }
 
+// Option configures optional Server features.
+type Option func(*Server)
+
+// WithHub enables relaying unmatched webhooks to agents and serves the agent
+// long-poll endpoints (alongside the webhook receivers).
+func WithHub(h *relay.Hub) Option { return func(s *Server) { s.hub = h } }
+
+// WithHubStatus exposes this instance's agent-mode connection state to the UI.
+func WithHubStatus(fn func() model.HubStatus) Option { return func(s *Server) { s.hubStatus = fn } }
+
 // newServer builds the Server with its handler dependencies. Both NewServer and
 // NewHooksHandler share it so the two handlers behave identically per route.
-func newServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger) *Server {
+func newServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger, opts ...Option) *Server {
 	s := &Server{store: st, engine: engine, k8s: k8s, bus: bus, tags: tags, log: log, loginLimit: newRateLimiter()}
+	for _, o := range opts {
+		o(s)
+	}
 	secret, err := loadOrCreateSessionSecret(st)
 	if err != nil {
 		// Fall back to an ephemeral secret so the process still serves; existing
@@ -56,17 +77,28 @@ func newServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *eve
 	return s
 }
 
-// mountHooks registers the webhook receivers. It's shared so the hooks are
-// reachable both on the full handler and on a hooks-only listener.
+// mountHooks registers the webhook receivers and, when relaying is enabled, the
+// agent long-poll endpoints. It's shared so both are reachable on the full
+// handler and on a hooks-only listener (agents connect wherever webhooks can).
 func (s *Server) mountHooks(r chi.Router) {
 	r.Post("/hooks/dockerhub/{token}", s.hookDockerHub)
 	r.Post("/hooks/github", s.hookGitHub)
+	if s.hub != nil {
+		r.Get(relay.PathPoll, s.hub.HandlePoll)
+		r.Post(relay.PathResults, s.hub.HandleResults)
+	}
+}
+
+// NewRelayHandler returns the function an agent uses to run webhooks relayed
+// from its hub through its own receivers.
+func NewRelayHandler(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger) relay.Handler {
+	return newServer(st, engine, k8s, bus, tags, log).HandleRelayed
 }
 
 // NewServer constructs the full HTTP handler tree: API, webhook receivers, and
 // the embedded SPA.
-func NewServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger) http.Handler {
-	s := newServer(st, engine, k8s, bus, tags, log)
+func NewServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger, opts ...Option) http.Handler {
+	s := newServer(st, engine, k8s, bus, tags, log, opts...)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -109,6 +141,11 @@ func NewServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *eve
 			r.Get("/settings/registries", s.listRegistries)
 			r.Put("/settings/registries", s.putRegistry)
 			r.Delete("/settings/registries/{registry}", s.deleteRegistry)
+
+			r.Get("/agents", s.listAgents)
+			r.Post("/agents", s.createAgent)
+			r.Delete("/agents/{id}", s.deleteAgent)
+			r.Get("/hub", s.getHubStatus)
 		})
 	})
 
@@ -121,12 +158,13 @@ func NewServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *eve
 	return r
 }
 
-// NewHooksHandler returns a handler serving ONLY the webhook receivers, for
+// NewHooksHandler returns a handler serving ONLY the webhook receivers (and the
+// agent endpoints when relaying is enabled), for
 // binding to a separate listener that can be exposed publicly while the portal
 // and API stay on the private main listener. Anything other than /hooks/* is
 // 404 — the SPA and /api are deliberately not mounted here.
-func NewHooksHandler(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger) http.Handler {
-	s := newServer(st, engine, k8s, bus, tags, log)
+func NewHooksHandler(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *events.Bus, tags TagLister, log *slog.Logger, opts ...Option) http.Handler {
+	s := newServer(st, engine, k8s, bus, tags, log, opts...)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)

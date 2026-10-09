@@ -94,7 +94,8 @@ TAGALONG_KUBECONFIG=/path/to/kubeconfig TAGALONG_DB_PATH=./dev.db go run ./cmd/t
 Config is all environment variables: `TAGALONG_DB_PATH` (default `/data/tagalong.db`),
 `TAGALONG_LISTEN` (default `:8080`), `TAGALONG_HOOKS_LISTEN` (unset = webhooks share
 `TAGALONG_LISTEN`; see below), `TAGALONG_KUBECONFIG` (unset = in-cluster, then
-degraded).
+degraded), `TAGALONG_HUB_URL` + `TAGALONG_AGENT_TOKEN` (unset = standalone; see
+[Hub & agents](#hub--agents-internal-clusters)).
 
 The JSON API under `/api` is fully usable without the UI (see below).
 
@@ -244,6 +245,55 @@ Two common shapes:
 
 > **Gotcha:** GitHub matching is **one app per repo** — the lookup is `WHERE image_repo = ? LIMIT 1`. If two Apps share the same `image_repo`, a GitHub push fires only one of them (arbitrarily) and the other silently never deploys. To have the same image drive independently-configured Apps (different tag strategy, Cloudflare purge, etc.), use **Docker Hub-style per-app token URLs** (`/hooks/dockerhub/<token>`), which route by token, or enable per-app polling instead.
 
+## Hub & agents (internal clusters)
+
+A tagalong on a private network can't receive webhooks, and you may not want to
+expose it. Instead, run it as an **agent** of a public tagalong (the **hub**):
+the agent dials **out** to the hub and long-polls it over HTTPS, so nothing on
+the internal network accepts inbound connections.
+
+```
+Docker Hub / GitHub ──webhook──▶ HUB (public)
+                                  ├─ has an app for it?  → deploys to its own cluster (unchanged)
+                                  └─ no app for it        → relays to every agent
+                                                              ▲
+                     AGENT (internal) ── outbound long-poll ──┘
+                     handles it exactly like a direct webhook, on its own cluster
+```
+
+- **Each instance keeps its own apps.** Configure internal apps on the agent's
+  own portal; the hub needs no knowledge of them. Polling and Cloudflare purges
+  run on whichever instance owns the app.
+- **Relay rule:** a webhook goes to agents only when the hub has **no app** for
+  it (unknown Docker Hub token, or a GitHub package with no matching
+  `image_repo`). If both the hub and an agent configure the same repo, only the
+  hub deploys it on GitHub pushes.
+- **Docker Hub:** register the hook against the *hub's* hostname using the
+  *agent* app's token: `https://<hub>/hooks/dockerhub/<agent-app-token>`.
+- **GitHub:** the hub's single org/repo webhook covers agents too. The hub
+  verifies the signature with *its* secret; agents trust relayed payloads, so
+  their own GitHub secret doesn't need to match.
+
+**Setup**
+
+1. On the hub: **Settings → Agents → Add agent**. Copy the `TAGALONG_HUB_URL`
+   and `TAGALONG_AGENT_TOKEN` shown (the token is shown **once**; to replace it,
+   remove the agent and add it again).
+2. On the agent, set those two env vars (see the commented block in
+   `manifests/deployment.yaml`) and restart. Its **Settings → Hub connection**
+   card and the hub's **Agents** list both show it as *connected*.
+
+The agent endpoints (`/agent/v1/poll`, `/agent/v1/results`) are served wherever
+the webhooks are — including the hooks-only listener — so a hub using
+`TAGALONG_HOOKS_LISTEN` keeps its portal private too.
+
+**Webhook responses from the hub** list each agent's outcome:
+`{"status":"relayed","agents":[{"agent":"office","state":"done","status":202,"response":{...}}]}`.
+`state` is `done` (agent answered), `pending` (connected but slower than ~8s) or
+`queued` (offline — delivered when it reconnects, if within 15 minutes; up to
+100 per agent). Delivery is at-most-once: if an agent crashes mid-webhook it is
+not retried, so enable polling on agent apps if you can't afford a miss.
+
 ## API quick reference
 
 All `/api` routes except `healthz`, `login`, `logout`, and `me` require the
@@ -269,9 +319,15 @@ GET    /api/events[?app_id=&before_id=&limit=]
 GET    /api/events/stream             # Server-Sent Events (live activity)
 GET/PUT /api/settings                 # Cloudflare token (masked on read); GitHub webhook secret (shown in clear)
 GET/PUT/DELETE /api/settings/registries
+GET    /api/agents                    # agents registered with this hub (+ live status)
+POST   /api/agents                    # {"name":"office"} → returns the agent token ONCE
+DELETE /api/agents/{id}
+GET    /api/hub                       # this instance's connection to its hub (agent mode)
 
 POST   /hooks/dockerhub/{token}
 POST   /hooks/github
+GET    /agent/v1/poll                 # agent long-poll (Authorization: Bearer <agent token>)
+POST   /agent/v1/results
 ```
 
 Example — log in, register an app, and deploy a tag (`-c/-b jar` stores and

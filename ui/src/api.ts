@@ -109,6 +109,27 @@ export interface RegistryCred {
   password: string;
 }
 
+// Agent is a downstream tagalong registered with this instance (the hub). It
+// receives the webhooks this instance has no app for.
+export interface Agent {
+  id: number;
+  name: string;
+  created_at: string;
+  connected: boolean;
+  last_seen?: string;
+  queued: number;
+}
+
+// HubStatus is this instance's own connection to a hub (agent mode).
+export interface HubStatus {
+  enabled: boolean;
+  url?: string;
+  connected: boolean;
+  last_contact?: string;
+  last_error?: string;
+  relayed: number;
+}
+
 export interface Me {
   username: string;
   must_change_password: boolean;
@@ -216,4 +237,9 @@ export const api = {
   putRegistry: (c: RegistryCred) => req<void>("PUT", "/api/settings/registries", c),
   deleteRegistry: (registry: string) =>
     req<void>("DELETE", `/api/settings/registries/${encodeURIComponent(registry)}`),
+  listAgents: () => req<Agent[]>("GET", "/api/agents").then((a) => a ?? []),
+  // The token is returned only here, once.
+  createAgent: (name: string) => req<Agent & { token: string }>("POST", "/api/agents", { name }),
+  deleteAgent: (id: number) => req<void>("DELETE", `/api/agents/${id}`),
+  hubStatus: () => req<HubStatus>("GET", "/api/hub"),
 };
