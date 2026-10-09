@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { api, webhookBase, type App, type DeployEvent, type TargetStatus } from "../api";
-import { CopyField, downloadText, errMsg, ErrorBox, StatusBadge, timeAgo, tagOf } from "../components";
+import {
+  CopyField,
+  downloadText,
+  errMsg,
+  ErrorBox,
+  removeAppPrompt,
+  StatusBadge,
+  timeAgo,
+  tagOf,
+} from "../components";
 import { useLiveEvents } from "../useEvents";
 
 export default function AppDetail() {
@@ -67,7 +76,7 @@ export default function AppDetail() {
   };
 
   const del = async () => {
-    if (!confirm(`Delete app "${app?.name}"? History is kept.`)) return;
+    if (!confirm(removeAppPrompt(app?.name ?? ""))) return;
     try {
       await api.deleteApp(appId);
       nav("/");
@@ -120,7 +129,7 @@ export default function AppDetail() {
             Edit
           </Link>
           <button className="btn danger" onClick={del}>
-            Delete
+            Remove
           </button>
         </div>
       </div>
