@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/timothydodd/tagalong/internal/deploy"
 	"github.com/timothydodd/tagalong/internal/events"
-	"github.com/timothydodd/tagalong/internal/model"
 	"github.com/timothydodd/tagalong/internal/relay"
 	"github.com/timothydodd/tagalong/internal/store"
 	"github.com/timothydodd/tagalong/ui"
@@ -38,10 +37,10 @@ type Server struct {
 	loginLimit *rateLimiter
 
 	// hub relays every webhook this instance receives to registered agents;
-	// nil disables relaying. hubStatus reports this instance's own connection
-	// to a hub when it runs as an agent; nil when it doesn't.
-	hub       *relay.Hub
-	hubStatus func() model.HubStatus
+	// nil disables relaying. agent manages this instance's own (optional)
+	// connection to a hub; nil disables the /api/hub config endpoints.
+	hub   *relay.Hub
+	agent *relay.Manager
 
 	// sessionSecret is guarded by secretMu because changePassword rotates it.
 	secretMu      sync.RWMutex
@@ -55,8 +54,9 @@ type Option func(*Server)
 // long-poll endpoints (alongside the webhook receivers).
 func WithHub(h *relay.Hub) Option { return func(s *Server) { s.hub = h } }
 
-// WithHubStatus exposes this instance's agent-mode connection state to the UI.
-func WithHubStatus(fn func() model.HubStatus) Option { return func(s *Server) { s.hubStatus = fn } }
+// WithAgent lets the UI view and configure this instance's agent-mode
+// connection to a hub.
+func WithAgent(m *relay.Manager) Option { return func(s *Server) { s.agent = m } }
 
 // newServer builds the Server with its handler dependencies. Both NewServer and
 // NewHooksHandler share it so the two handlers behave identically per route.
@@ -146,6 +146,7 @@ func NewServer(st *store.Store, engine *deploy.Engine, k8s *deploy.K8s, bus *eve
 			r.Post("/agents", s.createAgent)
 			r.Delete("/agents/{id}", s.deleteAgent)
 			r.Get("/hub", s.getHubStatus)
+			r.Put("/hub", s.putHubConfig)
 		})
 	})
 

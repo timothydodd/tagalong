@@ -364,3 +364,86 @@ func jsonNum(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)
 }
+
+// agentUIServer builds an agent instance whose hub connection is managed from
+// the API, plus a logged-in handler for it.
+func agentUIServer(t *testing.T) (*instance, http.Handler, *relay.Manager) {
+	t.Helper()
+	in := newInstance(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	m := relay.NewManager(ctx, NewRelayHandler(in.st, in.engine, in.k8s, in.bus, nil, in.log), in.log)
+	h := NewServer(in.st, in.engine, in.k8s, in.bus, nil, in.log, WithAgent(m))
+	return in, cookieInjector{h: h, c: loginCookie(t, h)}, m
+}
+
+func putHub(t *testing.T, h http.Handler, body string) (int, model.HubStatus, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/hub", bytes.NewBufferString(body)))
+	var st model.HubStatus
+	json.Unmarshal(rec.Body.Bytes(), &st)
+	return rec.Code, st, rec.Body.String()
+}
+
+func TestHubConfigFromUI(t *testing.T) {
+	hub := newInstance(t)
+	ts := httptest.NewServer(hub.handler)
+	t.Cleanup(ts.Close)
+	hub.st.CreateAgent("office", "agent-secret-token")
+
+	agent, h, m := agentUIServer(t)
+
+	// Validation.
+	if code, _, raw := putHub(t, h, `{"url":"ftp://x","token":"t"}`); code != http.StatusBadRequest {
+		t.Fatalf("bad scheme: expected 400, got %d %s", code, raw)
+	}
+	if code, _, raw := putHub(t, h, `{"url":"`+ts.URL+`","token":""}`); code != http.StatusBadRequest {
+		t.Fatalf("missing token: expected 400, got %d %s", code, raw)
+	}
+
+	// Save → connects without a restart; token is masked on read.
+	code, st, raw := putHub(t, h, `{"url":"`+ts.URL+`/","token":"agent-secret-token"}`)
+	if code != http.StatusOK || st.URL != ts.URL || st.Token != maskedValue || st.Locked {
+		t.Fatalf("save: %d %s", code, raw)
+	}
+	if v, _ := agent.st.GetSetting(model.KeyHubAgentToken); v != "agent-secret-token" {
+		t.Fatalf("token not persisted: %q", v)
+	}
+	waitConnected(t, hub, true)
+
+	// Echoing the mask back keeps the stored token.
+	putHub(t, h, `{"url":"`+ts.URL+`","token":"********"}`)
+	if v, _ := agent.st.GetSetting(model.KeyHubAgentToken); v != "agent-secret-token" {
+		t.Fatalf("masked save clobbered token: %q", v)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !m.Status().Connected && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !m.Status().Connected {
+		t.Fatal("did not reconnect after re-save")
+	}
+
+	// Empty URL disconnects and forgets the token.
+	code, st, raw = putHub(t, h, `{"url":"","token":""}`)
+	if code != http.StatusOK || st.Enabled || st.URL != "" {
+		t.Fatalf("disconnect: %d %s", code, raw)
+	}
+	if v, _ := agent.st.GetSetting(model.KeyHubAgentToken); v != "" {
+		t.Fatalf("token kept after disconnect: %q", v)
+	}
+}
+
+func TestHubConfigLockedByEnv(t *testing.T) {
+	_, h, m := agentUIServer(t)
+	m.Lock()
+	if code, _, raw := putHub(t, h, `{"url":"https://hub.example.com","token":"x"}`); code != http.StatusConflict {
+		t.Fatalf("expected 409 when env-managed, got %d %s", code, raw)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hub", nil))
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"locked":true`)) {
+		t.Fatalf("status should report locked: %s", rec.Body.String())
+	}
+}

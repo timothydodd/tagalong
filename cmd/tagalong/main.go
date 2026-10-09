@@ -101,15 +101,20 @@ func main() {
 	defer pollCancel()
 	go poller.New(st, engine, k8s, reg, log).Run(pollCtx)
 
-	// Agent mode: connect out to a hub and process the webhooks it relays.
+	// Agent mode: connect out to a hub and process the webhooks it relays. The
+	// env vars win (and lock the UI); otherwise use what was saved in Settings.
+	agent := relay.NewManager(pollCtx, httpapi.NewRelayHandler(st, engine, k8s, bus, reg, log), log)
+	opts = append(opts, httpapi.WithAgent(agent))
 	if cfg.HubURL != "" {
 		if cfg.AgentToken == "" {
 			log.Error("TAGALONG_HUB_URL is set but TAGALONG_AGENT_TOKEN is empty")
 			os.Exit(1)
 		}
-		client := relay.NewClient(cfg.HubURL, cfg.AgentToken, httpapi.NewRelayHandler(st, engine, k8s, bus, reg, log), log)
-		opts = append(opts, httpapi.WithHubStatus(client.Status))
-		go client.Run(pollCtx)
+		agent.Lock()
+		agent.Apply(cfg.HubURL, cfg.AgentToken)
+	} else if hubURL, _ := st.GetSetting(model.KeyHubURL); hubURL != "" {
+		token, _ := st.GetSetting(model.KeyHubAgentToken)
+		agent.Apply(hubURL, token)
 	}
 
 	handler := httpapi.NewServer(st, engine, k8s, bus, reg, log, opts...)

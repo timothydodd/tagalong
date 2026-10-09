@@ -46,6 +46,8 @@ spec:
             #   value: ":8081"
             # Agent mode: connect out to a hub tagalong and handle the webhooks it
             # relays. Create the agent (and its token) in the hub's Settings → Agents.
+            # Optional — this can also be set in the agent's Settings → Hub connection;
+            # when set here it takes precedence and the UI is read-only.
             # - name: TAGALONG_HUB_URL
             #   value: https://tagalong.example.com
             # - name: TAGALONG_AGENT_TOKEN

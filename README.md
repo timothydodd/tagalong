@@ -94,8 +94,8 @@ TAGALONG_KUBECONFIG=/path/to/kubeconfig TAGALONG_DB_PATH=./dev.db go run ./cmd/t
 Config is all environment variables: `TAGALONG_DB_PATH` (default `/data/tagalong.db`),
 `TAGALONG_LISTEN` (default `:8080`), `TAGALONG_HOOKS_LISTEN` (unset = webhooks share
 `TAGALONG_LISTEN`; see below), `TAGALONG_KUBECONFIG` (unset = in-cluster, then
-degraded), `TAGALONG_HUB_URL` + `TAGALONG_AGENT_TOKEN` (unset = standalone; see
-[Hub & agents](#hub--agents-internal-clusters)).
+degraded), `TAGALONG_HUB_URL` + `TAGALONG_AGENT_TOKEN` (optional — agent mode can
+also be set in the UI; see [Hub & agents](#hub--agents-internal-clusters)).
 
 The JSON API under `/api` is fully usable without the UI (see below).
 
@@ -284,12 +284,18 @@ Docker Hub / GitHub ──webhook──▶ HUB (public)
 
 **Setup**
 
-1. On the hub: **Settings → Agents → Add agent**. Copy the `TAGALONG_HUB_URL`
-   and `TAGALONG_AGENT_TOKEN` shown (the token is shown **once**; to replace it,
-   remove the agent and add it again).
-2. On the agent, set those two env vars (see the commented block in
-   `manifests/deployment.yaml`) and restart. Its **Settings → Hub connection**
-   card and the hub's **Agents** list both show it as *connected*.
+1. On the hub: **Settings → Agents → Add agent**. Copy the hub URL and agent
+   token shown (the token is shown **once**; to replace it, remove the agent and
+   add it again).
+2. On the agent: **Settings → Hub connection** → paste both → **Connect**. It
+   connects immediately (no restart) and the setting survives restarts.
+   **Disconnect** turns agent mode off.
+
+   Alternatively set `TAGALONG_HUB_URL` and `TAGALONG_AGENT_TOKEN` (see the
+   commented block in `manifests/deployment.yaml`). The env vars take
+   precedence, and the UI then shows the connection read-only.
+3. Both sides show it as *connected*: the agent's **Hub connection** card and
+   the hub's **Agents** list.
 
 The agent endpoints (`/agent/v1/poll`, `/agent/v1/results`) are served wherever
 the webhooks are — including the hooks-only listener — so a hub using
@@ -334,6 +340,7 @@ GET    /api/agents                    # agents registered with this hub (+ live 
 POST   /api/agents                    # {"name":"office"} → returns the agent token ONCE
 DELETE /api/agents/{id}
 GET    /api/hub                       # this instance's connection to its hub (agent mode)
+PUT    /api/hub                       # {"url":"https://hub…","token":"…"} → connect now; {"url":""} disconnects
 
 POST   /hooks/dockerhub/{token}
 POST   /hooks/github

@@ -128,6 +128,10 @@ export interface HubStatus {
   last_contact?: string;
   last_error?: string;
   relayed: number;
+  // Set by TAGALONG_HUB_URL / TAGALONG_AGENT_TOKEN — read-only in the UI.
+  locked: boolean;
+  // Masked as "********" when set.
+  token?: string;
 }
 
 export interface Me {
@@ -242,4 +246,6 @@ export const api = {
   createAgent: (name: string) => req<Agent & { token: string }>("POST", "/api/agents", { name }),
   deleteAgent: (id: number) => req<void>("DELETE", `/api/agents/${id}`),
   hubStatus: () => req<HubStatus>("GET", "/api/hub"),
+  // Empty url disconnects. Echo "********" back to keep the stored token.
+  putHub: (url: string, token: string) => req<HubStatus>("PUT", "/api/hub", { url, token }),
 };
