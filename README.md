@@ -40,7 +40,7 @@ An **App** ties an image repo to one or more cluster workloads:
 
 ## Local development
 
-Requires Go 1.25+ and Node 22+.
+Requires Go 1.25+ and Node 22+ (plus [ko](https://ko.build) only to publish an image by hand).
 
 ```bash
 make build          # build the UI then the Go binary (UI embedded via go:embed)
@@ -101,19 +101,16 @@ The JSON API under `/api` is fully usable without the UI (see below).
 
 ## Build & publish (CI)
 
-`.github/workflows/docker-publish.yml` builds a multi-arch (amd64/arm64) image
-and pushes it to the GitHub Container Registry as
+`.github/workflows/publish.yml` builds a multi-arch (amd64/arm64) image with
+[ko](https://ko.build) and publishes it to the GitHub Container Registry as
 [`ghcr.io/timothydodd/tagalong`](https://github.com/timothydodd/tagalong/pkgs/container/tagalong).
-It authenticates with the workflow's built-in `GITHUB_TOKEN`, so no secrets are
-needed:
+No Docker is involved — ko cross-compiles the Go binary onto the distroless
+base — and it authenticates with the workflow's built-in `GITHUB_TOKEN`, so no
+secrets are needed:
 
-- push to `main` → publishes `ghcr.io/timothydodd/tagalong:latest` (+ `:main-<sha>`)
-- push a `vX.Y.Z` tag → publishes `:X.Y.Z`, `:X.Y`, and `:latest`
-- pull requests build only (no push), to catch breakage early
-
-Releases are cut by tagging: `git tag v0.1.0 && git push origin v0.1.0` (or
-create a GitHub release with a new `vX.Y.Z` tag), which publishes `:0.1.0`,
-`:0.1`, and `:latest`.
+- push to `main` → runs the tests, then publishes `:latest` and `:sha-<shortsha>`
+- push a `vX.Y.Z` tag (or create a GitHub release with one) → publishes `:X.Y.Z` and `:X.Y`
+- pull requests test and build only (no push)
 
 ## Import / export apps as YAML
 
@@ -161,11 +158,8 @@ Only the single admin login exists — there are no roles or multiple users.
 
 ## Deploy to the cluster
 
-1. Build and push the image (from a machine with Docker, or let CI do it):
-   ```bash
-   make docker IMAGE=ghcr.io/timothydodd/tagalong:latest
-   docker push ghcr.io/timothydodd/tagalong:latest
-   ```
+1. Publish the image — CI does this on every push to `main`. To do it by hand,
+   install [ko](https://ko.build), `ko login ghcr.io`, then `make image`.
 2. Apply the manifests:
    ```bash
    kubectl apply -f manifests/namespace.yaml

@@ -1,0 +1,12 @@
+# ko build config (see .github/workflows/publish.yml and `make image`).
+# Same runtime as before: static distroless base, running as uid 65532.
+defaultBaseImage: gcr.io/distroless/static-debian12:nonroot
+builds:
+  - id: tagalong
+    main: ./cmd/tagalong
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w

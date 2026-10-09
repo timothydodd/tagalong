@@ -1,7 +1,7 @@
 # tagalong — build & dev tasks
-IMAGE ?= ghcr.io/timothydodd/tagalong:latest
+REPO ?= ghcr.io/timothydodd/tagalong
 
-.PHONY: ui build run dev dev-ui test vet docker clean
+.PHONY: ui build run dev dev-ui test vet image clean
 
 ## ui: install deps and build the React SPA into ui/dist
 ui:
@@ -36,9 +36,12 @@ test:
 vet:
 	go vet ./...
 
-## docker: build the container image
-docker:
-	docker build -t $(IMAGE) .
+## image: build the multi-arch image with ko (no Docker) and push it to $(REPO).
+## Needs `ko` (https://ko.build) and `ko login ghcr.io` first. CI does this on
+## every push to main, so you rarely need it.
+image: ui
+	KO_DOCKER_REPO=$(REPO) ko build ./cmd/tagalong --bare \
+		--platform=linux/amd64,linux/arm64 --tags latest
 
 ## clean: remove build artifacts
 clean:
