@@ -1,0 +1,100 @@
+name: Build and Publish
+
+# Builds the multi-arch (amd64/arm64) image with ko and publishes it to the
+# GitHub Container Registry as ghcr.io/timothydodd/tagalong (the repo's
+# package). No Docker is involved: ko cross-compiles the pure-Go binary
+# (CGO off) and layers it onto the distroless base, so there's no Docker
+# daemon, builder image, Dockerfile, or emulation. Auth is the built-in
+# GITHUB_TOKEN — no secrets needed.
+#
+# Tags:
+#   - push to main            → :latest and :sha-<shortsha>
+#   - push of a git tag vX.Y.Z → :X.Y.Z and :X.Y (pre-releases: :X.Y.Z-rc.N only)
+#   - pull request            → test + build only (no push)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+# A newer push supersedes an in-flight run instead of piling up.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI
+        # Into ui/dist, which the Go binary embeds via go:embed.
+        run: |
+          npm ci --prefix ui
+          npm run build --prefix ui
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Set up ko
+        # Installs ko, logs it in to ghcr.io with GITHUB_TOKEN, and sets
+        # KO_DOCKER_REPO=ghcr.io/timothydodd/tagalong.
+        uses: ko-build/setup-ko@v0.10
+        with:
+          version: v0.19.1
+
+      - name: Image tags
+        id: tags
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              v="${GITHUB_REF#refs/tags/v}"
+              if [[ "$v" == *-* ]]; then tags="$v"; else tags="$v,${v%.*}"; fi ;;
+            refs/heads/main)
+              tags="latest,sha-${GITHUB_SHA::7}" ;;
+            *)
+              tags="pr-${{ github.event.number }}" ;;
+          esac
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Image tags: $tags"
+
+      - name: Build and publish
+        env:
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        # --bare publishes to exactly KO_DOCKER_REPO. PRs build without pushing;
+        # ko rejects --bare together with --push=false, and the name is moot
+        # there anyway. The source label and annotation link the package to
+        # this repo on GitHub.
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            mode="--push=false"
+          else
+            mode="--bare"
+          fi
+          ko build ./cmd/tagalong $mode \
+            --platform=linux/amd64,linux/arm64 \
+            --tags "${{ steps.tags.outputs.tags }}" \
+            --image-label "org.opencontainers.image.source=$SOURCE" \
+            --image-label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --image-label "org.opencontainers.image.description=Self-hosted continuous deployment for k3s" \
+            --image-annotation "org.opencontainers.image.source=$SOURCE"
